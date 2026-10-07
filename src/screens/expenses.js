@@ -25,11 +25,11 @@ export function renderExpenses(container) {
             Cash Drawer Float
           </span>
         </div>
-        <h1 class="screen-title">Floor Outlays & Petty Cash</h1>
-        <p class="screen-subtitle">Daily Store Expenses & End-of-Day Cash Till Tally</p>
+        <h1 class="screen-title">Store Expenses</h1>
+        <p class="screen-subtitle">Record expenses and reconcile the cash drawer</p>
       </div>
       <button id="btn-quick-log-exp" class="btn-primary" style="height:36px; padding:0 10px; font-size:11px;">
-        ${Icons.plus(14)} Log Outlay
+        ${Icons.plus(14)} Add Expense
       </button>
     </div>
 
@@ -83,10 +83,10 @@ export function renderExpenses(container) {
     </div>
 
     <!-- Expense Entries List -->
-    <div class="section-label">Disbursement Log (${storeExpenses.length} entries)</div>
+    <div class="section-label">Expense Log (${storeExpenses.length} entries)</div>
 
     <div style="display:flex; flex-direction:column; gap:8px;">
-      ${storeExpenses.map(exp => `
+      ${storeExpenses.length ? storeExpenses.map(exp => `
         <div style="display:flex; align-items:center; justify-content:space-between; background:var(--surface-card); border:1px solid var(--surface-border); border-radius:var(--radius-md); padding:10px 12px;">
           <div style="flex:1; min-width:0; padding-right:8px;">
             <div style="font-weight:600; font-size:13px; color:var(--text-main);">${exp.title}</div>
@@ -94,16 +94,48 @@ export function renderExpenses(container) {
               ${exp.time} • ${exp.category} • Paid via ${exp.paidVia}
             </div>
           </div>
-          <div style="font-family:var(--font-mono); font-weight:700; font-size:14px; color:var(--status-outstock);">
-            -₹${exp.amount.toLocaleString('en-IN')}
+          <div style="display:flex; align-items:center; gap:8px;">
+            <div style="font-family:var(--font-mono); font-weight:700; font-size:14px; color:var(--status-outstock);">
+              -₹${exp.amount.toLocaleString('en-IN')}
+            </div>
+            <button class="icon-btn-ghost btn-edit-expense" data-id="${exp.id}" title="Edit expense" aria-label="Edit expense">${Icons.edit(15)}</button>
+            <button class="icon-btn-ghost btn-delete-expense" data-id="${exp.id}" title="Delete expense" style="color:var(--status-outstock);">${Icons.trash(14)}</button>
           </div>
         </div>
-      `).join('')}
+      `).join('') : `
+        <div class="artisanal-card" style="text-align:center; padding:20px;">
+          <p style="font-size:13px; font-weight:600; margin-bottom:4px;">No expenses recorded for this store yet</p>
+          <p style="font-size:11px; color:var(--text-muted); margin-bottom:12px;">Use Add Expense to record a store payment.</p>
+          <button id="btn-empty-add-expense" class="btn-primary" style="height:36px; padding:0 12px;">
+            ${Icons.plus(14)} Add Expense
+          </button>
+        </div>
+      `}
     </div>
   `;
 
   // Bind Events
-  container.querySelector('#btn-quick-log-exp')?.addEventListener('click', () => openExpenseModal());
+  const openExpense = () => openExpenseModal(container);
+  container.querySelector('#btn-quick-log-exp')?.addEventListener('click', openExpense);
+  container.querySelector('#btn-empty-add-expense')?.addEventListener('click', openExpense);
+  container.querySelectorAll('.btn-edit-expense').forEach(button => {
+    button.addEventListener('click', () => {
+      const expense = State.expenses.find(item => item.id === button.dataset.id);
+      if (expense) openExpenseModal(container, expense);
+    });
+  });
+  container.querySelectorAll('.btn-delete-expense').forEach(button => {
+    button.addEventListener('click', () => {
+      const expense = State.expenses.find(item => item.id === button.dataset.id);
+      if (!expense || !window.confirm(`Delete expense "${expense.title}" for ₹${expense.amount}?`)) return;
+      try {
+        State.deleteExpense(expense.id);
+        renderExpenses(container);
+      } catch (error) {
+        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: error.message, type: 'alert' } }));
+      }
+    });
+  });
 
   container.querySelector('#btn-reconcile-cash')?.addEventListener('click', () => {
     window.dispatchEvent(new CustomEvent('show-toast', {
@@ -112,7 +144,8 @@ export function renderExpenses(container) {
   });
 }
 
-function openExpenseModal() {
+function openExpenseModal(container, expense = null) {
+  const editing = Boolean(expense);
   const currentStore = State.getCurrentStore();
   const modal = document.createElement('div');
   modal.className = 'modal-overlay';
@@ -120,7 +153,7 @@ function openExpenseModal() {
     <div class="modal-sheet">
       <div class="modal-drag-handle"></div>
       <div class="modal-header-row">
-        <h3 class="modal-title">Log Store Petty Cash Outlay</h3>
+        <h3 class="modal-title">${editing ? 'Edit Store Expense' : 'Add Store Expense'}</h3>
         <button class="icon-btn-ghost modal-close-btn" style="width:32px; height:32px;">${Icons.x(16)}</button>
       </div>
 
@@ -131,37 +164,38 @@ function openExpenseModal() {
       <form id="form-new-expense">
         <div class="form-group">
           <label class="form-label">Expense Description</label>
-          <input type="text" id="exp-title" class="form-control" placeholder="e.g. Garment tags, hangers & steamer water" required />
+          <input type="text" id="exp-title" class="form-control" placeholder="e.g. Garment tags, hangers & steamer water" value="${expense?.title || ''}" required />
         </div>
 
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
           <div class="form-group">
             <label class="form-label">Category</label>
             <select id="exp-cat" class="form-control">
-              <option value="Store Maintenance">Store Maintenance</option>
-              <option value="Store Ambiance">Store Ambiance</option>
-              <option value="Packing Supplies">Packing Supplies</option>
-              <option value="Staff Refreshments">Staff Refreshments</option>
-              <option value="Decor & Tradition">Decor & Tradition</option>
+              ${['Store Maintenance', 'Store Ambiance', 'Packing Supplies', 'Staff Refreshments', 'Decor & Tradition', 'Other'].map(category => `<option value="${category}" ${expense?.category === category ? 'selected' : ''}>${category}</option>`).join('')}
             </select>
           </div>
 
           <div class="form-group">
             <label class="form-label">Amount (₹)</label>
-            <input type="number" id="exp-amount" class="form-control" placeholder="450" required />
+            <input type="number" id="exp-amount" class="form-control" placeholder="450" value="${expense?.amount ?? ''}" min="0.01" step="0.01" required />
           </div>
+        </div>
+
+        <div class="form-group" id="exp-custom-category-group" style="display:none;">
+          <label class="form-label" for="exp-custom-category">Other category</label>
+          <input type="text" id="exp-custom-category" class="form-control" placeholder="Enter expense category" value="${expense && !['Store Maintenance', 'Store Ambiance', 'Packing Supplies', 'Staff Refreshments', 'Decor & Tradition'].includes(expense.category) ? expense.category : ''}" />
         </div>
 
         <div class="form-group">
           <label class="form-label">Disbursement Source</label>
           <select id="exp-mode" class="form-control">
-            <option value="Cash">Cash (from drawer float)</option>
-            <option value="UPI">UPI (Store account)</option>
+            <option value="Cash" ${expense?.paidVia === 'Cash' ? 'selected' : ''}>Cash (from drawer float)</option>
+            <option value="UPI" ${expense?.paidVia === 'UPI' ? 'selected' : ''}>UPI (Store account)</option>
           </select>
         </div>
 
         <button type="submit" class="btn-primary btn-full" style="margin-top:10px;">
-          ${Icons.check(16)} Record Petty Cash Voucher
+          ${Icons.check(16)} ${editing ? 'Save Changes' : 'Save Expense'}
         </button>
       </form>
     </div>
@@ -173,18 +207,57 @@ function openExpenseModal() {
   modal.addEventListener('click', (e) => {
     if (e.target === modal) modal.remove();
   });
+  modal.querySelector('#exp-amount')?.addEventListener('input', event => {
+    event.currentTarget.setCustomValidity('');
+  });
+  const categorySelect = modal.querySelector('#exp-cat');
+  const customCategoryGroup = modal.querySelector('#exp-custom-category-group');
+  const customCategoryInput = modal.querySelector('#exp-custom-category');
+  if (expense && !['Store Maintenance', 'Store Ambiance', 'Packing Supplies', 'Staff Refreshments', 'Decor & Tradition'].includes(expense.category)) {
+    categorySelect.value = 'Other';
+  }
+  categorySelect.addEventListener('change', () => {
+    const isOther = categorySelect.value === 'Other';
+    customCategoryGroup.style.display = isOther ? '' : 'none';
+    customCategoryInput.required = isOther;
+    if (!isOther) customCategoryInput.value = '';
+  });
+  categorySelect.dispatchEvent(new Event('change'));
 
   modal.querySelector('#form-new-expense')?.addEventListener('submit', (e) => {
     e.preventDefault();
     const title = modal.querySelector('#exp-title').value;
-    const category = modal.querySelector('#exp-cat').value;
-    const amount = parseInt(modal.querySelector('#exp-amount').value, 10);
+    const category = categorySelect.value === 'Other'
+      ? customCategoryInput.value.trim()
+      : categorySelect.value;
+    const amount = Number(modal.querySelector('#exp-amount').value);
     const paidVia = modal.querySelector('#exp-mode').value;
 
-    State.addExpense({ title, category, amount: amount || 0, paidVia });
+    if (!category) {
+      customCategoryInput.setCustomValidity('Enter the expense category.');
+      customCategoryInput.reportValidity();
+      return;
+    }
+    customCategoryInput.setCustomValidity('');
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      const amountInput = modal.querySelector('#exp-amount');
+      amountInput.setCustomValidity('Enter an expense amount greater than zero.');
+      amountInput.reportValidity();
+      return;
+    }
+
+    try {
+      if (editing) State.updateExpense(expense.id, { title, category, amount, paidVia });
+      else State.addExpense({ title, category, amount, paidVia });
+    } catch (error) {
+      window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: error.message, type: 'alert' } }));
+      return;
+    }
     modal.remove();
+    renderExpenses(container);
     window.dispatchEvent(new CustomEvent('show-toast', {
-      detail: { message: `Logged ₹${amount} for ${title}`, type: 'success' }
+      detail: { message: `${editing ? 'Updated' : 'Logged'} ₹${amount} for ${title}`, type: 'success' }
     }));
   });
 }

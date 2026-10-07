@@ -2,6 +2,7 @@
 import { State } from '../state.js';
 import { Icons } from '../icons.js';
 import { openBarcodeModal } from '../components/barcodeGenerator.js';
+import { openSizePicker } from './pos.js';
 
 let activeCategory = 'All';
 let activeStatusFilter = 'All';
@@ -24,9 +25,8 @@ export function renderInventory(container) {
     const matchQuery = !searchQuery || 
       item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       item.sku.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.craft.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (item.fabric && item.fabric.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      item.colorName.toLowerCase().includes(searchQuery.toLowerCase());
+      (item.craft || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (item.colorName || '').toLowerCase().includes(searchQuery.toLowerCase());
 
     return matchCategory && matchStatus && matchQuery;
   });
@@ -41,16 +41,16 @@ export function renderInventory(container) {
             ${currentStore.name}
           </span>
           <span style="font-size:11px; color:var(--text-muted); font-family:var(--font-mono);">
-            ${filtered.length} Kurti Styles
+            ${filtered.length} Products
           </span>
         </div>
-        <h1 class="screen-title">Garment & Kurti Inventory</h1>
-        <p class="screen-subtitle">SKU Matrix, Floor Stock & Barcode Printing</p>
+        <h1 class="screen-title">Product Inventory</h1>
+        <p class="screen-subtitle">SKU matrix, available sizes, stock & barcode printing</p>
       </div>
 
       ${isAdmin ? `
         <button id="btn-add-sku" class="btn-primary" style="height:38px; padding:0 12px; font-size:12px;">
-          ${Icons.plus(16)} Add Kurti SKU
+          ${Icons.plus(16)} Add Product
         </button>
       ` : ''}
     </div>
@@ -63,7 +63,7 @@ export function renderInventory(container) {
           id="inv-search-input" 
           type="text" 
           class="search-input" 
-          placeholder="Search by SKU, kurti craft, fabric (Mulmul, Chanderi)..."
+          placeholder="Search by SKU, product name, craft or color..."
           value="${searchQuery}"
         />
       </div>
@@ -119,8 +119,8 @@ export function renderInventory(container) {
         return `
           <div class="sku-feed-card">
             <!-- Swatch Visual Preview -->
-            <div class="sku-thumbnail" style="background:${item.imageGradient};">
-              <span class="sku-silk-badge">${item.fabric ? item.fabric.split(' ')[0] : 'KURTI'}</span>
+            <div class="sku-thumbnail" style="background:${item.imageGradient}; ${item.imageDataUrl ? `background-image:url('${item.imageDataUrl}'); background-size:cover; background-position:center;` : ''}">
+              <span class="sku-silk-badge">${item.category === 'Innerwear (Bras/Panties/Strips)' ? 'INNERWEAR' : 'GARMENT'}</span>
               <div style="background:rgba(0,0,0,0.65); width:100%; text-align:center; padding:2px; font-size:8px; color:#fff; font-family:var(--font-mono);">
                 ${item.sku}
               </div>
@@ -137,24 +137,20 @@ export function renderInventory(container) {
                   <span class="status-pill ${statusClass}">${statusLabel}</span>
                 </div>
 
-                <div class="sku-fabric-meta">
+                <div class="sku-product-meta">
                   <span class="color-dot" style="background:${item.colorHex};"></span>
                   <span>${item.colorName}</span>
-                  <span style="color:var(--text-muted);">• ${item.craft.split('•')[0]}</span>
+                  <span style="color:var(--text-muted);">• ${(item.craft || item.subType || '').split('•')[0]}</span>
                 </div>
 
                 <!-- Multi-store stock pills for Admin -->
                 ${isAdmin ? `
                   <div style="display:flex; gap:4px; margin-top:4px; font-size:10px; font-family:var(--font-mono);">
-                    <span style="background:var(--surface-cream); padding:1px 6px; border-radius:4px; border:1px solid var(--surface-border);">
-                      JBL: ${item.stockPerStore?.['ST-01'] ?? 0}
-                    </span>
-                    <span style="background:var(--surface-cream); padding:1px 6px; border-radius:4px; border:1px solid var(--surface-border);">
-                      BNJ: ${item.stockPerStore?.['ST-02'] ?? 0}
-                    </span>
-                    <span style="background:var(--surface-cream); padding:1px 6px; border-radius:4px; border:1px solid var(--surface-border);">
-                      INB: ${item.stockPerStore?.['ST-03'] ?? 0}
-                    </span>
+                    ${State.stores.map(store => `
+                      <span style="background:var(--surface-cream); padding:1px 6px; border-radius:4px; border:1px solid var(--surface-border);">
+                        ${store.code}: ${item.stockPerStore?.[store.id] ?? 0}
+                      </span>
+                    `).join('')}
                     <span style="color:var(--color-primary); font-weight:700;">
                       (Tot: ${totalBrandStock})
                     </span>
@@ -166,7 +162,7 @@ export function renderInventory(container) {
               <div style="display:flex; align-items:center; justify-content:space-between; margin-top:8px;">
                 <div>
                   <span class="sku-price">₹${item.price.toLocaleString('en-IN')}</span>
-                  <span style="font-size:10px; color:var(--text-muted); margin-left:4px;">Size: ${item.size}</span>
+                  <span style="font-size:10px; color:var(--text-muted); margin-left:4px;">Sizes: ${(item.availableSizes || item.sizes || [item.size]).join(', ')}</span>
                 </div>
 
                 <div style="display:flex; align-items:center; gap:6px;">
@@ -174,6 +170,8 @@ export function renderInventory(container) {
                   <button class="icon-btn-ghost btn-view-barcode" data-id="${item.id}" title="Generate & Print Barcode Label" style="width:32px; height:32px; color:var(--color-secondary);">
                     ${Icons.barcode(16)}
                   </button>
+                  ${isAdmin ? `<button class="icon-btn-ghost btn-edit-product" data-id="${item.id}" title="Edit product" aria-label="Edit product">${Icons.edit(15)}</button>
+                    <button class="icon-btn-ghost btn-delete-product" data-id="${item.id}" title="Delete product" style="color:var(--status-outstock);">${Icons.x(14)}</button>` : ''}
 
                   <!-- Steppers (Admin or Salesman) -->
                   <div class="tactile-stepper">
@@ -203,7 +201,11 @@ export function renderInventory(container) {
   const searchInput = container.querySelector('#inv-search-input');
   searchInput?.addEventListener('input', (e) => {
     searchQuery = e.target.value;
+    const cursor = e.target.selectionStart;
     renderInventory(container);
+    const updatedInput = container.querySelector('#inv-search-input');
+    updatedInput?.focus();
+    updatedInput?.setSelectionRange(cursor, cursor);
   });
 
   container.querySelectorAll('.filter-pill').forEach(btn => {
@@ -230,6 +232,24 @@ export function renderInventory(container) {
       const id = e.currentTarget.dataset.id;
       const prod = State.products.find(p => p.id === id);
       if (prod) openBarcodeModal(prod);
+    });
+  });
+  container.querySelectorAll('.btn-edit-product').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const product = State.products.find(item => item.id === btn.dataset.id);
+      if (product) openAddKurtiModal(product);
+    });
+  });
+  container.querySelectorAll('.btn-delete-product').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const product = State.products.find(item => item.id === btn.dataset.id);
+      if (!product || !window.confirm(`Delete ${product.name} (${product.sku})? Historical bills remain unchanged.`)) return;
+      try {
+        State.deleteProduct(product.id);
+        renderInventory(container);
+      } catch (error) {
+        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: error.message, type: 'alert' } }));
+      }
     });
   });
 
@@ -263,10 +283,18 @@ export function renderInventory(container) {
           }));
           return;
         }
-        State.addToCart(prod);
-        window.dispatchEvent(new CustomEvent('show-toast', {
-          detail: { message: `Added ${prod.name} to POS Cart!`, type: 'success' }
-        }));
+        State.setActiveTab('pos');
+        openSizePicker(prod, size => {
+          try {
+            State.addToActiveBill(prod, size);
+          } catch (error) {
+            window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: error.message, type: 'alert' } }));
+            return;
+          }
+          window.dispatchEvent(new CustomEvent('show-toast', {
+            detail: { message: `Added ${prod.name} (${size}) to the active bill.`, type: 'success' }
+          }));
+        });
       }
     });
   });
@@ -277,7 +305,10 @@ export function renderInventory(container) {
   });
 }
 
-function openAddKurtiModal() {
+function openAddKurtiModal(product = null) {
+  const editing = Boolean(product);
+  const availableSizes = product?.availableSizes || product?.sizes || [product?.size].filter(Boolean);
+  const currentStore = State.getCurrentStore();
   const modal = document.createElement('div');
   modal.className = 'modal-overlay';
   modal.id = 'modal-add-kurti';
@@ -285,67 +316,81 @@ function openAddKurtiModal() {
     <div class="modal-sheet">
       <div class="modal-drag-handle"></div>
       <div class="modal-header-row">
-        <h3 class="modal-title">Register New Kurti / Garment SKU</h3>
+        <h3 class="modal-title">${editing ? 'Edit Product' : 'Register New Product'}</h3>
         <button class="icon-btn-ghost modal-close-btn" style="width:32px; height:32px;">${Icons.x(16)}</button>
       </div>
 
       <form id="form-new-kurti">
         <div class="form-group">
-          <label class="form-label">Garment Style Name</label>
-          <input type="text" id="new-krt-name" class="form-control" placeholder="e.g. Pure Muslin Alia Cut Anarkali Kurti" required />
+          <label class="form-label">Product Name</label>
+          <input type="text" id="new-krt-name" class="form-control" placeholder="Product name" value="${escapeHtml(product?.name || '')}" required />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Category</label>
+          <select id="new-krt-cat" class="form-control">
+            ${State.masterData.categories.map(c => `<option value="${escapeHtml(c)}" ${product?.category === c ? 'selected' : ''}>${c}</option>`).join('')}
+          </select>
         </div>
 
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
           <div class="form-group">
-            <label class="form-label">Category</label>
-            <select id="new-krt-cat" class="form-control">
-              ${State.masterData.categories.map(c => `<option value="${c}">${c}</option>`).join('')}
-            </select>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label">Fabric</label>
-            <select id="new-krt-fabric" class="form-control">
-              ${State.masterData.fabrics.map(f => `<option value="${f}">${f}</option>`).join('')}
-            </select>
-          </div>
-        </div>
-
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
-          <div class="form-group">
-            <label class="form-label">Standard Size</label>
-            <select id="new-krt-size" class="form-control">
-              ${State.masterData.sizes.map(s => `<option value="${s}">${s}</option>`).join('')}
+            <label class="form-label">Innerwear Type (if applicable)</label>
+            <select id="new-krt-subtype" class="form-control">
+              <option value="">Not innerwear</option>
+              ${State.masterData.innerwearTypes.map(type => `<option value="${type}" ${product?.subType === type ? 'selected' : ''}>${type}</option>`).join('')}
             </select>
           </div>
 
           <div class="form-group">
             <label class="form-label">Color / Shade</label>
-            <input type="text" id="new-krt-color" class="form-control" placeholder="e.g. Dusty Rose" required />
+            <input type="text" id="new-krt-color" class="form-control" placeholder="e.g. Dusty Rose" value="${escapeHtml(product?.colorName || '')}" required />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Available Sizes (select all that apply)</label>
+          <div style="display:flex; flex-wrap:wrap; gap:6px;">
+            ${State.masterData.sizes.map(size => `
+              <label class="filter-pill" style="display:flex; align-items:center; gap:4px;">
+                <input type="checkbox" name="new-krt-sizes" value="${escapeHtml(size)}" ${availableSizes.includes(size) ? 'checked' : ''} />
+                ${size}
+              </label>
+            `).join('')}
           </div>
         </div>
 
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
           <div class="form-group">
             <label class="form-label">Retail MRP (₹)</label>
-            <input type="number" id="new-krt-price" class="form-control" placeholder="3499" required />
+            <input type="number" id="new-krt-price" class="form-control" placeholder="3499" value="${product?.price ?? ''}" min="0.01" step="0.01" required />
           </div>
 
           <div class="form-group">
             <label class="form-label">Initial Stock Units</label>
-            <input type="number" id="new-krt-stock" class="form-control" value="6" min="1" required />
+            <input type="number" id="new-krt-stock" class="form-control" value="${editing ? State.getProductStock(product.id, currentStore.id) : 6}" min="0" required />
           </div>
         </div>
 
         <div class="form-group">
-          <label class="form-label">Weave / Craft Details</label>
-          <select id="new-krt-craft" class="form-control">
-            ${State.masterData.crafts.map(cr => `<option value="${cr}">${cr}</option>`).join('')}
-          </select>
+          <label class="form-label">Product Type / Craft</label>
+          <input type="text" id="new-krt-craft" class="form-control" placeholder="Optional" value="${escapeHtml(product?.craft || '')}" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Product image (optional, maximum 1 MB)</label>
+          <input type="file" id="new-krt-image" class="form-control" accept="image/*" />
+          <small id="product-image-status" style="color:var(--text-muted);">${product?.imageDataUrl ? 'Image saved; select a file to replace it.' : 'No image selected.'}</small>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Maximum allowed discount (%)</label>
+          <input type="number" id="new-krt-max-discount" class="form-control" min="0" max="100"
+            value="${product?.maxDiscountPercent ?? State.masterData.maxDiscountRules[product?.category || State.masterData.categories[0]] ?? 15}" required />
+          <small style="color:var(--text-muted);">The category discount limit is the maximum allowed for this product.</small>
         </div>
 
         <button type="submit" class="btn-primary btn-full" style="margin-top:10px;">
-          ${Icons.barcode(16)} Save SKU & Generate Barcode Tag
+          ${Icons.barcode(16)} ${editing ? 'Save Product Changes' : 'Save SKU & Generate Barcode Tags'}
         </button>
       </form>
     </div>
@@ -358,45 +403,120 @@ function openAddKurtiModal() {
     if (e.target === modal) modal.remove();
   });
 
-  modal.querySelector('#form-new-kurti')?.addEventListener('submit', (e) => {
+  const categorySelect = modal.querySelector('#new-krt-cat');
+  const maxDiscountInput = modal.querySelector('#new-krt-max-discount');
+  const imageInput = modal.querySelector('#new-krt-image');
+  imageInput.addEventListener('change', () => {
+    const file = imageInput.files?.[0];
+    const status = modal.querySelector('#product-image-status');
+    if (file && file.size > 1024 * 1024) {
+      imageInput.value = '';
+      status.textContent = 'Image exceeds 1 MB. Choose a smaller image.';
+      return;
+    }
+    status.textContent = file ? `${file.name} selected.` : (product?.imageDataUrl ? 'Image saved; select a file to replace it.' : 'No image selected.');
+  });
+  categorySelect.addEventListener('change', () => {
+    const limit = State.masterData.maxDiscountRules[categorySelect.value] ?? 15;
+    maxDiscountInput.max = String(limit);
+    maxDiscountInput.value = String(Math.min(Number(maxDiscountInput.value), limit));
+  });
+  maxDiscountInput.max = String(State.masterData.maxDiscountRules[categorySelect.value] ?? 15);
+
+  modal.querySelector('#form-new-kurti')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const name = modal.querySelector('#new-krt-name').value;
     const cat = modal.querySelector('#new-krt-cat').value;
-    const fabric = modal.querySelector('#new-krt-fabric').value;
-    const size = modal.querySelector('#new-krt-size').value;
+    const sizes = Array.from(modal.querySelectorAll('input[name="new-krt-sizes"]:checked')).map(input => input.value);
+    if (!sizes.length) {
+      window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Select at least one available size.', type: 'alert' } }));
+      return;
+    }
+    const size = sizes[0];
     const color = modal.querySelector('#new-krt-color').value;
-    const price = parseInt(modal.querySelector('#new-krt-price').value, 10);
+    const price = Number(modal.querySelector('#new-krt-price').value);
     const stock = parseInt(modal.querySelector('#new-krt-stock').value, 10);
     const craft = modal.querySelector('#new-krt-craft').value;
+    const subType = modal.querySelector('#new-krt-subtype').value;
+    const categoryMax = State.masterData.maxDiscountRules[cat] ?? 15;
+    const maxDiscountPercent = Number(maxDiscountInput.value);
+    if (!Number.isFinite(maxDiscountPercent) || maxDiscountPercent < 0 || maxDiscountPercent > categoryMax) {
+      window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: `Maximum product discount must be between 0% and ${categoryMax}%.`, type: 'alert' } }));
+      return;
+    }
+    if (!Number.isFinite(price) || price <= 0 || !Number.isInteger(stock) || stock < 0) {
+      window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Enter a valid price and non-negative whole-number stock.', type: 'alert' } }));
+      return;
+    }
 
-    const skuPrefix = cat.includes('Kurti') ? 'KRT' : (cat.includes('Set') ? 'SET' : 'GAR');
-    const randNum = Math.floor(1000 + Math.random() * 9000);
-    const skuCode = `TRG-${skuPrefix}-${randNum}`;
+    const skuCode = product?.sku || `TRG-${cat.includes('Kurti') ? 'KRT' : (cat.includes('Set') ? 'SET' : 'GAR')}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const imageFile = imageInput.files?.[0];
+    let imageDataUrl = product?.imageDataUrl || '';
+    if (imageFile) {
+      if (imageFile.size > 1024 * 1024) {
+        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Product image must be 1 MB or smaller.', type: 'alert' } }));
+        return;
+      }
+      try {
+        imageDataUrl = await readFileAsDataUrl(imageFile);
+      } catch (error) {
+        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: `Could not read product image: ${error.message}`, type: 'alert' } }));
+        return;
+      }
+    }
 
-    const created = State.addNewProduct({
-      id: skuCode,
-      sku: skuCode,
+    const productData = {
       name,
       category: cat,
-      fabric,
       craft,
+      subType: cat === 'Innerwear (Bras/Panties/Strips)' ? subType : craft,
       colorName: color,
       colorHex: '#881337',
-      price: price || 2999,
+      price,
       costPrice: Math.round(price * 0.55),
       size,
-      sizes: [size, 'M (38)', 'L (40)', 'XL (42)'],
-      initialStock: stock || 4,
+      availableSizes: sizes,
+      maxDiscountPercent,
+      initialStock: stock,
       threshold: 2,
-      imageGradient: 'linear-gradient(135deg, #881337 0%, #b45309 100%)'
-    });
+      imageGradient: product?.imageGradient || 'linear-gradient(135deg, #881337 0%, #b45309 100%)',
+      ...(imageDataUrl ? { imageDataUrl } : {})
+    };
+    let created;
+    try {
+      if (editing) {
+        State.updateProduct(product.id, productData);
+        State.setStock(product.id, stock, currentStore.id);
+        created = State.products.find(item => item.id === product.id);
+      } else {
+        created = State.addNewProduct({ ...productData, id: skuCode, sku: skuCode });
+      }
+    } catch (error) {
+      window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: error.message, type: 'alert' } }));
+      return;
+    }
 
     modal.remove();
     window.dispatchEvent(new CustomEvent('show-toast', {
-      detail: { message: `Registered SKU ${skuCode}! Opening barcode tag...`, type: 'success' }
+      detail: { message: editing ? `Updated ${skuCode}.` : `Registered SKU ${skuCode}! Opening barcode tags...`, type: 'success' }
     }));
 
-    // Instantly preview generated barcode label for printing!
-    setTimeout(() => openBarcodeModal(created), 300);
+    renderInventory(document.querySelector('#screen-content') || document.querySelector('main'));
+    if (!editing) setTimeout(() => openBarcodeModal(created), 300);
   });
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('Unexpected image data.'));
+    reader.onerror = () => reject(reader.error || new Error('File reading failed.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[character]);
 }

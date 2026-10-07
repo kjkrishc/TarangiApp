@@ -4,18 +4,58 @@ import { Icons } from '../icons.js';
 
 let activeReportTab = 'sales'; // 'sales' | 'stock' | 'expenses'
 let reportStoreFilter = 'ALL';
+let reportPeriod = 'daily';
+let reportDate = new Date().toISOString().slice(0, 10);
+
+function getReportDateRange(period, referenceDate) {
+  const selected = new Date(`${referenceDate}T12:00:00`);
+  let start;
+  let end;
+  if (period === 'monthly') {
+    start = new Date(selected.getFullYear(), selected.getMonth(), 1);
+    end = new Date(selected.getFullYear(), selected.getMonth() + 1, 1);
+  } else if (period === 'quarterly') {
+    const firstMonth = Math.floor(selected.getMonth() / 3) * 3;
+    start = new Date(selected.getFullYear(), firstMonth, 1);
+    end = new Date(selected.getFullYear(), firstMonth + 3, 1);
+  } else if (period === 'yearly') {
+    start = new Date(selected.getFullYear(), 0, 1);
+    end = new Date(selected.getFullYear() + 1, 0, 1);
+  } else {
+    start = new Date(selected.getFullYear(), selected.getMonth(), selected.getDate());
+    end = new Date(selected.getFullYear(), selected.getMonth(), selected.getDate() + 1);
+  }
+  return { start, end };
+}
+
+function getBillTimestamp(bill) {
+  if (bill.dateISO || bill.createdAt) return new Date(bill.dateISO || bill.createdAt);
+  const parsed = new Date(bill.date);
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+}
+
+function isInSelectedPeriod(record, start, end) {
+  const rawTimestamp = record.dateISO || record.createdAt;
+  const timestamp = rawTimestamp ? new Date(rawTimestamp) : new Date();
+  return timestamp >= start && timestamp < end;
+}
 
 export function renderReports(container) {
   const targetStoreId = reportStoreFilter;
-  
-  // Filter bills
-  const filteredBills = State.recentBills.filter(b => targetStoreId === 'ALL' || b.storeId === targetStoreId);
+  const { start, end } = getReportDateRange(reportPeriod, reportDate);
+  const filteredBills = State.recentBills.filter(bill => {
+    const inStore = targetStoreId === 'ALL' || bill.storeId === targetStoreId;
+    const timestamp = getBillTimestamp(bill);
+    return inStore && timestamp >= start && timestamp < end;
+  });
   const totalSalesAmount = filteredBills.reduce((s, b) => s + b.total, 0);
   const totalBillsCount = filteredBills.length;
   const avgBillValue = totalBillsCount > 0 ? Math.round(totalSalesAmount / totalBillsCount) : 0;
 
   // Filter expenses
-  const filteredExpenses = State.expenses.filter(e => targetStoreId === 'ALL' || e.storeId === targetStoreId);
+  const filteredExpenses = State.expenses.filter(expense =>
+    (targetStoreId === 'ALL' || expense.storeId === targetStoreId) && isInSelectedPeriod(expense, start, end)
+  );
   const totalExpensesAmount = filteredExpenses.reduce((s, e) => s + e.amount, 0);
 
   // Stock calculations
@@ -44,11 +84,21 @@ export function renderReports(container) {
     <div class="page-header-row">
       <div>
         <h1 class="screen-title">Executive Reports & Audits</h1>
-        <p class="screen-subtitle">Daily Sales, Stock Valuations & Floor Outlays</p>
+        <p class="screen-subtitle">Sales, stock valuations & floor outlays</p>
       </div>
       <button id="btn-print-active-report" class="btn-secondary" style="height:36px; padding:0 10px; font-size:11px;">
         ${Icons.printer(14)} Print Report
       </button>
+    </div>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:12px;">
+      <select id="report-period-select" class="form-control" aria-label="Report period" style="height:36px; font-size:12px;">
+        <option value="daily" ${reportPeriod === 'daily' ? 'selected' : ''}>Daily</option>
+        <option value="monthly" ${reportPeriod === 'monthly' ? 'selected' : ''}>Monthly</option>
+        <option value="quarterly" ${reportPeriod === 'quarterly' ? 'selected' : ''}>Quarterly</option>
+        <option value="yearly" ${reportPeriod === 'yearly' ? 'selected' : ''}>Yearly</option>
+      </select>
+      <input id="report-date-input" class="form-control" type="date" value="${reportDate}" aria-label="Report date" style="height:36px;" />
     </div>
 
     <!-- Multi-Store Filter Strip -->
@@ -65,7 +115,7 @@ export function renderReports(container) {
     <!-- Report Type Tabs -->
     <div style="display:flex; gap:6px; margin-bottom:14px; background:var(--surface-cream); padding:4px; border-radius:var(--radius-md); border:1px solid var(--surface-border);">
       <button class="view-mode-btn rep-tab-btn ${activeReportTab === 'sales' ? 'active' : ''}" data-tab="sales" style="flex:1; justify-content:center;">
-        Daily Sales
+        Sales
       </button>
       <button class="view-mode-btn rep-tab-btn ${activeReportTab === 'stock' ? 'active' : ''}" data-tab="stock" style="flex:1; justify-content:center;">
         Stock Audit
@@ -125,8 +175,8 @@ export function renderReports(container) {
       <!-- Itemized Invoices Table -->
       <div class="artisanal-card">
         <div class="section-label" style="margin-bottom:10px;">
-          <span>Daily Invoices Log (${filteredBills.length})</span>
-          <span style="font-size:11px; color:var(--text-muted);">Today</span>
+          <span>Invoices in Period (${filteredBills.length})</span>
+          <span style="font-size:11px; color:var(--text-muted);">${reportPeriod.charAt(0).toUpperCase() + reportPeriod.slice(1)} period</span>
         </div>
 
         <div style="display:flex; flex-direction:column; gap:8px;">
@@ -144,11 +194,12 @@ export function renderReports(container) {
                   <div style="font-family:var(--font-mono); font-weight:700; font-size:14px; color:var(--color-primary);">
                     ₹${b.total.toLocaleString('en-IN')}
                   </div>
-                  <span style="font-size:10px; color:var(--text-muted);">${b.itemsCount} pcs</span>
+                  <span style="font-size:10px; color:var(--text-muted);">${b.itemsCount ?? b.items?.reduce((sum, item) => sum + item.quantity, 0) ?? 0} pcs</span>
                 </div>
               </div>
             `;
           }).join('')}
+          ${filteredBills.length ? '' : '<p style="font-size:12px; color:var(--text-muted);">No invoices in the selected period.</p>'}
         </div>
       </div>
     ` : ''}
@@ -257,6 +308,15 @@ export function renderReports(container) {
   `;
 
   // Bind Events
+  container.querySelector('#report-period-select')?.addEventListener('change', event => {
+    reportPeriod = event.target.value;
+    renderReports(container);
+  });
+  container.querySelector('#report-date-input')?.addEventListener('change', event => {
+    if (!event.target.value) return;
+    reportDate = event.target.value;
+    renderReports(container);
+  });
   container.querySelector('#report-store-select')?.addEventListener('change', (e) => {
     reportStoreFilter = e.target.value;
     renderReports(container);

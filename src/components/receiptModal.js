@@ -10,13 +10,21 @@ export function openReceiptModal(bill) {
   modal.className = 'modal-overlay';
   modal.id = 'modal-receipt';
 
-  const billBarcodeSvg = generateBarcodeSvg(bill.billNumber, 180, 36);
+  const barcodePayload = bill.barcodePayload || `TARANGI-${bill.storeCode || 'STORE'}-${bill.billNumber}`;
+  const billBarcodeSvg = generateBarcodeSvg(barcodePayload, 220, 42);
+  const isReturn = bill.billType === 'return-exchange';
+  const returnDetails = bill.returnDetails;
+  const money = value => `${Number(value) < 0 ? '-₹' : '₹'}${Math.abs(Number(value) || 0).toLocaleString('en-IN')}`;
+  const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[character]);
+  const displayItems = Array.isArray(bill.items) ? bill.items : [];
 
   modal.innerHTML = `
     <div class="modal-sheet" style="max-height:92vh;">
       <div class="modal-drag-handle"></div>
       <div class="modal-header-row">
-        <h3 class="modal-title">Tax Invoice Generated</h3>
+        <h3 class="modal-title">${isReturn ? 'Return / Exchange Bill' : 'Tax Invoice Generated'}</h3>
         <button class="icon-btn-ghost modal-close-btn" style="width:32px; height:32px;">${Icons.x(16)}</button>
       </div>
 
@@ -35,75 +43,103 @@ export function openReceiptModal(bill) {
         </div>
 
         <div class="invoice-meta-row">
-          <span><strong>Invoice No:</strong> ${bill.billNumber}</span>
-          <span><strong>Date:</strong> ${bill.date} ${bill.time}</span>
+          <span><strong>Invoice No:</strong> ${escapeHtml(bill.billNumber)}</span>
+          <span><strong>Date:</strong> ${escapeHtml(bill.date)} ${escapeHtml(bill.time)}</span>
         </div>
+        ${isReturn ? `<div class="invoice-meta-row"><span><strong>Original invoice:</strong> ${escapeHtml(bill.originalBillNumber)}</span><span><strong>Return ID:</strong> ${escapeHtml(bill.returnId)}</span></div>` : ''}
 
         <div class="invoice-meta-row">
-          <span><strong>Customer:</strong> ${bill.customer}</span>
-          <span><strong>Mobile:</strong> ${bill.customerMobile}</span>
+          <span><strong>Customer:</strong> ${escapeHtml(bill.customer)}</span>
+          <span><strong>Mobile:</strong> ${escapeHtml(bill.customerMobile)}</span>
         </div>
 
         <div class="invoice-meta-row" style="margin-bottom:8px;">
-          <span><strong>Payment:</strong> ${bill.paymentMode}</span>
-          <span><strong>Cashier:</strong> ${bill.salesmanName || 'Staff'}</span>
+          <span><strong>Payment:</strong> ${escapeHtml(bill.paymentMode)}</span>
+          <span><strong>Cashier:</strong> ${escapeHtml(bill.salesmanName || 'Staff')}</span>
         </div>
 
+        <div style="font-size:9px; color:var(--text-muted); margin-bottom:6px;">Item prices include GST; tax amounts are shown separately below.</div>
         <table class="invoice-table">
           <thead>
             <tr>
-              <th>Garment Style / SKU</th>
+              <th>Product / SKU</th>
               <th style="text-align:center;">Qty</th>
               <th style="text-align:right;">Rate (₹)</th>
               <th style="text-align:right;">Amount (₹)</th>
             </tr>
           </thead>
           <tbody>
-            ${bill.items.map((it) => `
+            ${displayItems.map((it) => `
               <tr>
                 <td>
-                  <strong>${it.product.name}</strong><br/>
-                  <span style="font-size:9px; color:#78716c;">SKU: ${it.product.sku} [${it.size}] • HSN: 6204</span>
+                  <strong>${it.returnLine ? 'RETURN — ' : isReturn ? 'EXCHANGE — ' : ''}${escapeHtml(it.product.name)}</strong><br/>
+                  <span style="font-size:9px; color:#78716c;">SKU: ${escapeHtml(it.product.sku)} [${escapeHtml(it.size)}] • HSN: 6204</span>
                 </td>
                 <td style="text-align:center;">${it.quantity}</td>
-                <td style="text-align:right;">${it.product.price.toLocaleString('en-IN')}</td>
-                <td style="text-align:right;">${(it.product.price * it.quantity).toLocaleString('en-IN')}</td>
+                <td style="text-align:right;">${money(it.product.price)}</td>
+                <td style="text-align:right;">${money(Math.round(it.product.price * it.quantity * (1 - (it.discountPercent || 0) / 100)))}</td>
               </tr>
             `).join('')}
           </tbody>
         </table>
 
         <div style="display:flex; flex-direction:column; gap:4px; font-size:11px; border-top:1px dashed var(--surface-border); padding-top:8px;">
+          ${isReturn && returnDetails ? `
+            <div style="display:flex; justify-content:space-between;">
+              <span>Returned item credit:</span>
+              <span style="font-family:var(--font-mono);">-${money(returnDetails.returnCreditAmount)}</span>
+            </div>
+            <div style="display:flex; justify-content:space-between;">
+              <span>Exchange item subtotal:</span>
+              <span style="font-family:var(--font-mono);">${money(returnDetails.exchangeSubtotal)}</span>
+            </div>
+            ${returnDetails.exchangeDiscountAmount ? `
+              <div style="display:flex; justify-content:space-between; color:var(--color-tertiary-dark); font-weight:600;">
+                <span>Exchange item discount:</span>
+                <span style="font-family:var(--font-mono);">-${money(returnDetails.exchangeDiscountAmount)}</span>
+              </div>
+            ` : ''}
+            <div style="display:flex; justify-content:space-between;">
+              <span>Exchange GST included:</span>
+              <span style="font-family:var(--font-mono);">${money(Number(returnDetails.cgst || 0) + Number(returnDetails.sgst || 0))}</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; color:var(--text-muted);">
+              <span>GST reversal on returned items:</span>
+              <span style="font-family:var(--font-mono);">-${money(returnDetails.returnGst)}</span>
+            </div>
+          ` : ''}
+          ${!isReturn ? `
           <div style="display:flex; justify-content:space-between;">
             <span>Subtotal:</span>
-            <span style="font-family:var(--font-mono);">₹${bill.subtotal.toLocaleString('en-IN')}</span>
+            <span style="font-family:var(--font-mono);">${money(bill.subtotal)}</span>
           </div>
 
           ${bill.discountAmount > 0 ? `
             <div style="display:flex; justify-content:space-between; color:var(--color-tertiary-dark); font-weight:600;">
-              <span>Discount (${bill.discountCode}):</span>
-              <span style="font-family:var(--font-mono);">-₹${bill.discountAmount.toLocaleString('en-IN')}</span>
+              <span>Item discounts:</span>
+              <span style="font-family:var(--font-mono);">-${money(bill.discountAmount)}</span>
             </div>
           ` : ''}
 
           <div style="display:flex; justify-content:space-between;">
             <span>Taxable Value:</span>
-            <span style="font-family:var(--font-mono);">₹${bill.taxable.toLocaleString('en-IN')}</span>
+            <span style="font-family:var(--font-mono);">${money(bill.taxable)}</span>
           </div>
 
           <div style="display:flex; justify-content:space-between; color:var(--text-muted);">
-            <span>Garment CGST (2.5%):</span>
-            <span style="font-family:var(--font-mono);">+₹${bill.cgst.toLocaleString('en-IN')}</span>
+            <span>CGST included (2.5%):</span>
+            <span style="font-family:var(--font-mono);">${money(bill.cgst)}</span>
           </div>
 
           <div style="display:flex; justify-content:space-between; color:var(--text-muted);">
-            <span>Garment SGST (2.5%):</span>
-            <span style="font-family:var(--font-mono);">+₹${bill.sgst.toLocaleString('en-IN')}</span>
+            <span>SGST included (2.5%):</span>
+            <span style="font-family:var(--font-mono);">${money(bill.sgst)}</span>
           </div>
+          ` : ''}
 
           <div style="display:flex; justify-content:space-between; font-size:14px; font-weight:700; color:var(--color-primary); border-top:1px solid var(--surface-border); padding-top:6px; margin-top:2px;">
-            <span>Net Grand Total:</span>
-            <span style="font-family:var(--font-mono); font-size:16px;">₹${bill.grandTotal.toLocaleString('en-IN')}</span>
+            <span>${isReturn ? Number(bill.grandTotal) < 0 ? 'Net refund due:' : Number(bill.grandTotal) > 0 ? 'Balance due:' : 'Net exchange total:' : 'Net Grand Total:'}</span>
+            <span style="font-family:var(--font-mono); font-size:16px;">${money(bill.grandTotal)}</span>
           </div>
         </div>
 
@@ -112,7 +148,7 @@ export function openReceiptModal(bill) {
         </div>
 
         <div style="text-align:center; font-size:9px; color:var(--text-muted); border-top:1px dashed var(--surface-border); padding-top:6px;">
-          Garments exchangeable within 7 days with original barcode tag intact.<br/>
+            ${isReturn ? `Return / exchange processed against ${escapeHtml(bill.originalBillNumber)}. Reference: ${escapeHtml(bill.returnId)}.` : 'For returns or exchanges, please bring this invoice and the original barcode tag.'}<br/>
           Thank you for shopping at Tarangi!
         </div>
       </div>
@@ -121,9 +157,6 @@ export function openReceiptModal(bill) {
       <div style="display:flex; gap:8px;">
         <button id="btn-print-bill" class="btn-primary" style="flex:1; height:44px;">
           ${Icons.printer(16)} Print Tax Invoice
-        </button>
-        <button id="btn-share-whatsapp" class="btn-zari" style="flex:1; height:44px; background:#15803d;">
-          WhatsApp Bill
         </button>
       </div>
     </div>
@@ -141,10 +174,4 @@ export function openReceiptModal(bill) {
     window.print();
   });
 
-  modal.querySelector('#btn-share-whatsapp')?.addEventListener('click', () => {
-    closeModal();
-    window.dispatchEvent(new CustomEvent('show-toast', {
-      detail: { message: `Digital bill link sent to ${bill.customerMobile}!`, type: 'success' }
-    }));
-  });
 }

@@ -59,7 +59,7 @@ function initApp() {
           <div class="header-top">
             <div class="brand-identity">
               <span class="brand-title">TARANGI</span>
-              <span class="brand-subtitle">• తారంగి</span>
+              <span class="brand-subtitle">• తరంగి</span>
             </div>
 
             <div style="display:flex; align-items:center; gap:6px;">
@@ -176,6 +176,15 @@ function initApp() {
 }
 
 function updateHeaderLabels() {
+  const header = document.querySelector('.app-header');
+  const nav = document.getElementById('bottom-nav');
+  if (!State.isLoggedIn) {
+    if (header) header.style.display = 'none';
+    if (nav) nav.style.display = 'none';
+    return;
+  }
+  if (header) header.style.display = '';
+  if (nav) nav.style.display = '';
   const storeLabel = document.getElementById('header-store-label');
   const userLabel = document.getElementById('header-user-label');
   const curStore = State.getCurrentStore();
@@ -186,16 +195,23 @@ function updateHeaderLabels() {
 
   if (userLabel) {
     const roleUpper = State.currentUser?.role === 'admin' ? 'Admin' : 'Sales';
-    userLabel.textContent = `${State.currentUser?.name.split(' ')[0]} (${roleUpper})`;
+    userLabel.textContent = `${State.currentUser?.name?.split(' ')[0] || 'User'} (${roleUpper})`;
   }
 }
 
 function renderNavItems() {
   const navContainer = document.getElementById('bottom-nav');
   if (!navContainer) return;
+  if (!State.isLoggedIn) {
+    navContainer.innerHTML = '';
+    navContainer.style.display = 'none';
+    return;
+  }
+  navContainer.style.display = '';
 
   const isAdmin = State.isAdmin();
-  const cartTotal = State.cart.reduce((s, i) => s + i.quantity, 0);
+  const activeBill = State.openBills.find(bill => bill.id === State.activeBillId);
+  const cartTotal = (activeBill?.items || []).reduce((sum, item) => sum + item.quantity, 0);
 
   if (isAdmin) {
     // Admin Navigation: Dashboard, Inventory, POS, Reports, Master Setup
@@ -226,6 +242,11 @@ function renderNavItems() {
         <span class="nav-tab-label">Reports</span>
       </button>
 
+      <button class="nav-tab-item ${State.activeTab === 'expenses' ? 'active' : ''}" data-tab="expenses">
+        ${Icons.expenses(20)}
+        <span class="nav-tab-label">Expenses</span>
+      </button>
+
       <button class="nav-tab-item ${State.activeTab === 'master' ? 'active' : ''}" data-tab="master">
         ${Icons.masterData(20)}
         <span class="nav-tab-label">Master</span>
@@ -254,7 +275,7 @@ function renderNavItems() {
 
       <button class="nav-tab-item ${State.activeTab === 'expenses' ? 'active' : ''}" data-tab="expenses">
         ${Icons.expenses(20)}
-        <span class="nav-tab-label">Floor Cash</span>
+        <span class="nav-tab-label">Expenses</span>
       </button>
     `;
   }
@@ -276,6 +297,10 @@ function renderNavItems() {
 function renderCurrentScreen() {
   const container = document.getElementById('screen-container');
   if (!container) return;
+  if (!State.isLoggedIn) {
+    renderLoginScreen(container);
+    return;
+  }
 
   switch (State.activeTab) {
     case 'dashboard':
@@ -306,6 +331,79 @@ function renderCurrentScreen() {
         renderPos(container);
       }
   }
+}
+
+function renderLoginScreen(container) {
+  container.innerHTML = `
+    <div style="min-height:100%; display:flex; align-items:center; justify-content:center; padding:22px 16px;">
+      <form id="form-login" class="artisanal-card" style="width:100%; max-width:380px; padding:22px;">
+        <div style="text-align:center; margin-bottom:20px;">
+          <div style="font-family:var(--font-serif); font-size:26px; color:var(--color-primary); font-weight:700;">TARANGI</div>
+          <p style="font-size:12px; color:var(--text-muted);">Retail point of sale • Staff login</p>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="login-user">Staff member</label>
+          <select id="login-user" class="form-control" required>
+            ${State.staffUsers.map(user => `<option value="${user.id}">${user.name} • ${user.designation}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="login-pin">PIN</label>
+          <input id="login-pin" class="form-control" type="password" inputmode="numeric" autocomplete="current-password" />
+        </div>
+        <div id="login-first-pin-fields" style="display:none;">
+          <p style="font-size:11px; color:var(--text-muted); margin-bottom:8px;">Set a 4–8 digit PIN for your first sign-in.</p>
+          <div class="form-group">
+            <label class="form-label" for="login-new-pin">New PIN</label>
+            <input id="login-new-pin" class="form-control" type="password" inputmode="numeric" minlength="4" maxlength="8" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="login-confirm-pin">Confirm PIN</label>
+            <input id="login-confirm-pin" class="form-control" type="password" inputmode="numeric" minlength="4" maxlength="8" />
+          </div>
+        </div>
+        <p id="login-error" role="alert" style="display:none; color:var(--status-outstock); font-size:12px; margin-bottom:10px;"></p>
+        <button type="submit" class="btn-primary btn-full" style="height:44px;">Sign in</button>
+      </form>
+    </div>
+  `;
+  const userSelect = container.querySelector('#login-user');
+  const pinInput = container.querySelector('#login-pin');
+  const firstPinFields = container.querySelector('#login-first-pin-fields');
+  const syncPinFields = () => {
+    const user = State.staffUsers.find(entry => entry.id === userSelect.value);
+    const requiresFirstPin = Boolean(user && !user.pin);
+    firstPinFields.style.display = requiresFirstPin ? '' : 'none';
+    pinInput.required = !requiresFirstPin;
+    pinInput.parentElement.style.display = requiresFirstPin ? 'none' : '';
+  };
+  userSelect.addEventListener('change', syncPinFields);
+  syncPinFields();
+  container.querySelector('#form-login')?.addEventListener('submit', event => {
+    event.preventDefault();
+    const userId = userSelect.value;
+    const user = State.staffUsers.find(entry => entry.id === userId);
+    let pin = pinInput.value;
+    if (user && !user.pin) {
+      const newPin = container.querySelector('#login-new-pin').value;
+      const confirmPin = container.querySelector('#login-confirm-pin').value;
+      if (!/^\d{4,8}$/.test(newPin) || newPin !== confirmPin) {
+        const error = container.querySelector('#login-error');
+        error.textContent = 'Set a matching PIN containing 4 to 8 digits.';
+        error.style.display = 'block';
+        return;
+      }
+      State.setStaffPin(userId, newPin);
+      pin = newPin;
+    }
+    if (!State.login(userId, pin)) {
+      const error = container.querySelector('#login-error');
+      error.textContent = 'The PIN is incorrect. Please try again.';
+      error.style.display = 'block';
+      container.querySelector('#login-pin').value = '';
+      container.querySelector('#login-pin').focus();
+    }
+  });
 }
 
 function openStoreSelectModal() {

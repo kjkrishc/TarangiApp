@@ -1,6 +1,7 @@
 // Component: Real Mobile Camera Barcode / SKU Scanner Viewfinder
 import { State } from '../state.js';
 import { Icons } from '../icons.js';
+import { openSizePicker } from '../screens/pos.js';
 
 let activeMediaStream = null;
 
@@ -162,16 +163,36 @@ export function openBarcodeScannerModal() {
   startCamera();
 
   const handleScanMatch = (sku) => {
-    const prod = State.products.find(p => p.sku.toLowerCase() === sku.toLowerCase() || p.id.toLowerCase() === sku.toLowerCase());
+    const normalizedCode = sku.trim().toLowerCase();
+    const prod = State.products
+      .slice()
+      .sort((a, b) => b.sku.length - a.sku.length)
+      .find(p => p.sku.toLowerCase() === normalizedCode ||
+        p.id.toLowerCase() === normalizedCode ||
+        normalizedCode.startsWith(`${p.sku.toLowerCase()}-`));
     if (prod) {
-      State.addToCart(prod);
       closeModal();
-      window.dispatchEvent(new CustomEvent('show-toast', {
-        detail: { message: `Scanned & added ${prod.name} to Cart!`, type: 'success' }
-      }));
-      if (State.activeTab !== 'pos') {
-        State.setActiveTab('pos');
+      if (State.activeTab !== 'pos') State.setActiveTab('pos');
+      const stock = State.getProductStock(prod.id);
+      if (stock <= 0) {
+        window.dispatchEvent(new CustomEvent('show-toast', {
+          detail: { message: `Cannot add ${prod.sku}: out of stock at this store.`, type: 'alert' }
+        }));
+        return;
       }
+      openSizePicker(prod, size => {
+        try {
+          State.addToActiveBill(prod, size);
+        } catch (error) {
+          window.dispatchEvent(new CustomEvent('show-toast', {
+            detail: { message: error.message, type: 'alert' }
+          }));
+          return;
+        }
+        window.dispatchEvent(new CustomEvent('show-toast', {
+          detail: { message: `Scanned and added ${prod.name} (${size}) to the active bill.`, type: 'success' }
+        }));
+      });
     } else {
       window.dispatchEvent(new CustomEvent('show-toast', {
         detail: { message: `SKU '${sku}' not found in catalog`, type: 'alert' }

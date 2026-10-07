@@ -1,425 +1,503 @@
-// Screen: POS & Billing with Dynamic Customer Capture & Autocomplete
+// Screen: POS billing, concurrent customer bills, returns and exchanges
 import { State } from '../state.js';
 import { Icons } from '../icons.js';
 
 let selectedPaymentMode = 'UPI';
-let customerSearchQuery = '';
-let selectedCustomerObj = null;
 
 export function renderPos(container) {
   const currentStore = State.getCurrentStore();
-  const subtotal = State.cart.reduce((sum, item) => sum + (item.product.price * item.quantity), 0);
-  const discountAmount = Math.round(subtotal * (State.discountPercent / 100));
-  const taxable = subtotal - discountAmount;
-  const cgst = Math.round(taxable * 0.025);
-  const sgst = Math.round(taxable * 0.025);
-  const grandTotal = taxable + cgst + sgst;
-
-  // Matching customers for autocomplete
-  const matchedCustomers = customerSearchQuery.trim().length >= 2 ? State.searchCustomers(customerSearchQuery) : [];
+  const bill = State.getActiveBill();
+  const items = bill.items;
+  const totals = State.calculateBillTotals(bill);
+  const itemCount = items.reduce((sum, item) => sum + item.quantity, 0);
 
   container.innerHTML = `
     <div class="page-header-row">
       <div>
         <div style="display:flex; align-items:center; gap:6px; margin-bottom:2px;">
-          <span class="status-pill instock" style="font-size:10px; padding:2px 6px;">
-            ${currentStore.name}
-          </span>
-          <span style="font-size:11px; color:var(--text-muted); font-family:var(--font-mono);">
-            Cashier: ${State.currentUser.name}
-          </span>
+          <span class="status-pill instock" style="font-size:10px; padding:2px 6px;">${currentStore.name}</span>
+          <span style="font-size:11px; color:var(--text-muted); font-family:var(--font-mono);">Cashier: ${State.currentUser?.name || 'Staff'}</span>
         </div>
         <h1 class="screen-title">Express POS Register</h1>
-        <p class="screen-subtitle">Instant Kurti & Garment Billing • Digital Receipt</p>
+        <p class="screen-subtitle">Garment billing • Digital receipt</p>
       </div>
-      <button id="btn-pos-scanner" class="icon-btn-ghost" title="Scan Barcode">
-        ${Icons.camera(18)}
-      </button>
     </div>
 
-    <!-- Customer Information Capture & Dynamic Search Card -->
+    <div class="artisanal-card" style="padding:10px 12px; margin-bottom:12px;">
+      <div class="section-label" style="margin-bottom:7px;">Open customer bills</div>
+      <div style="display:flex; gap:6px; overflow-x:auto; padding-bottom:4px;">
+        ${State.openBills.map(openBill => `
+          <div style="display:flex; align-items:center; flex-shrink:0; border:1px solid var(--surface-border); border-radius:8px; overflow:hidden;">
+            <button class="view-mode-btn bill-tab ${openBill.id === bill.id ? 'active' : ''}" data-bill-id="${openBill.id}">
+              ${openBill.title}${openBill.items.length ? ` (${openBill.items.reduce((sum, item) => sum + item.quantity, 0)})` : ''}
+            </button>
+            <button class="icon-btn-ghost btn-discard-bill" data-bill-id="${openBill.id}" title="Discard this open bill" aria-label="Discard ${openBill.title}" style="height:30px; color:var(--status-outstock);">${Icons.x(13)}</button>
+          </div>
+        `).join('')}
+        <button id="btn-new-bill" class="btn-secondary" style="height:32px; padding:0 10px; flex-shrink:0;">${Icons.plus(14)} New bill</button>
+      </div>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px;">
+        <span style="font-size:11px; color:var(--text-muted);">Currently completing: <strong>${bill.title}</strong></span>
+        <button id="btn-return-exchange" class="btn-secondary" style="height:32px; padding:0 9px; font-size:11px;">Return / Exchange</button>
+      </div>
+    </div>
+
     <div class="artisanal-card accent-rose" style="padding:12px 14px; margin-bottom:12px;">
       <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
-        <span style="font-weight:700; font-size:12px; color:var(--color-primary); display:flex; align-items:center; gap:5px;">
-          ${Icons.user(14)} Customer Details
-        </span>
-        ${selectedCustomerObj ? `
-          <button id="btn-clear-customer" style="background:none; border:none; color:var(--text-muted); font-size:11px; cursor:pointer;">
-            Clear / New
-          </button>
-        ` : `
-          <span style="font-size:10px; color:var(--text-muted);">Search by Name / Mobile</span>
-        `}
+        <span style="font-weight:700; font-size:12px; color:var(--color-primary);">${Icons.user(14)} Customer Details</span>
+        <span style="font-size:10px; color:var(--text-muted);">Search or enter a new customer</span>
       </div>
-
-      <!-- Live Search / Phone Autocomplete Input -->
       <div style="position:relative; margin-bottom:8px;">
         <div class="search-input-wrap">
           <span class="search-icon">${Icons.phone(14)}</span>
-          <input 
-            type="text" 
-            id="cust-search-input" 
-            class="search-input" 
-            placeholder="Type 10-digit mobile or customer name..." 
-            value="${selectedCustomerObj ? `${selectedCustomerObj.name} (${selectedCustomerObj.mobile})` : customerSearchQuery}"
-            autocomplete="off"
-            style="height:38px; font-size:12px;"
-          />
+          <input type="text" id="cust-search-input" class="search-input" placeholder="Type customer name or mobile..."
+            value="${bill.customer.name || ''}" autocomplete="off" style="height:38px; font-size:12px;" />
         </div>
-
-        <!-- Autocomplete Suggestions Dropdown -->
-        ${matchedCustomers.length > 0 && !selectedCustomerObj ? `
-          <div class="customer-autocomplete-popover">
-            ${matchedCustomers.map(c => `
-              <div class="cust-suggest-item interactive-tap" data-id="${c.id}">
-                <div>
-                  <div style="font-weight:700; font-size:12px; color:var(--text-main);">${c.name}</div>
-                  <div style="font-size:10px; color:var(--text-muted); font-family:var(--font-mono);">${c.mobile}</div>
-                </div>
-                <div style="text-align:right;">
-                  <span class="status-pill instock" style="font-size:9px;">${c.visits} visits</span>
-                  <div style="font-size:10px; color:var(--color-primary); font-family:var(--font-mono); font-weight:600;">
-                    ₹${c.totalSpent.toLocaleString('en-IN')}
-                  </div>
-                </div>
-              </div>
-            `).join('')}
-          </div>
-        ` : ''}
+        <div id="customer-suggestions"></div>
       </div>
+      <div style="font-size:10px; color:var(--text-muted); margin:-3px 0 7px;">
+        Existing name matches are suggestions only. Enter the new customer’s mobile below to keep same-name customers separate.
+      </div>
+      <div style="display:grid; grid-template-columns:1.2fr 1fr; gap:8px;">
+        <input type="text" id="cust-new-name" class="form-control" placeholder="Customer name"
+          value="${bill.customer.name || ''}" style="height:34px; font-size:11px;" />
+        <input type="tel" id="cust-new-phone" class="form-control" placeholder="Mobile (10 digits)" maxlength="10"
+          value="${bill.customer.mobile || ''}" style="height:34px; font-size:11px; font-family:var(--font-mono);" />
+      </div>
+    </div>
 
-      <!-- Quick Fields if New Customer -->
-      ${!selectedCustomerObj ? `
-        <div style="display:grid; grid-template-columns:1.2fr 1fr; gap:8px;">
-          <input 
-            type="text" 
-            id="cust-new-name" 
-            class="form-control" 
-            placeholder="Customer Name (e.g. Radhika)" 
-            style="height:34px; font-size:11px;"
-          />
-          <input 
-            type="tel" 
-            id="cust-new-phone" 
-            class="form-control" 
-            placeholder="Mobile (10 Digits)" 
-            maxlength="10"
-            style="height:34px; font-size:11px; font-family:var(--font-mono);"
-          />
-        </div>
-      ` : `
-        <div style="background:var(--surface-cream); border-radius:6px; padding:6px 10px; font-size:11px; display:flex; justify-content:space-between; align-items:center;">
-          <span>✅ Returning Client: <strong>${selectedCustomerObj.name}</strong></span>
-          <span style="font-family:var(--font-mono); color:var(--color-secondary);">Total Spend: ₹${selectedCustomerObj.totalSpent.toLocaleString('en-IN')}</span>
+    <div class="search-filter-box" style="margin-bottom:12px; position:relative;">
+      <div class="search-input-wrap">
+        <span class="search-icon">${Icons.search(16)}</span>
+        <input id="pos-quick-add-input" type="text" class="search-input" placeholder="Scan or enter product SKU / name..." />
+      </div>
+      <button id="btn-pos-scanner" class="icon-btn-ghost" title="Scan Barcode" aria-label="Scan barcode">${Icons.camera(18)}</button>
+      <div id="pos-product-suggestions" class="pos-product-suggestions"></div>
+    </div>
+
+    <div class="section-label">
+      <span>Bill items (${itemCount})</span>
+      ${items.length ? '<button id="btn-clear-cart" style="background:none; border:none; color:var(--color-primary); font-size:11px; cursor:pointer;">Clear items</button>' : ''}
+    </div>
+    <div class="pos-cart-list">
+      ${items.length ? items.map((item, index) => {
+        const categoryLimit = State.masterData.maxDiscountRules[item.product.category] ?? 15;
+        const maxDiscount = Math.min(item.product.maxDiscountPercent ?? categoryLimit, categoryLimit);
+        return `
+          <div class="pos-cart-item" style="align-items:flex-start;">
+            <div class="pos-item-info" style="flex:1; min-width:0; padding-right:8px;">
+              <div class="pos-item-title">${item.product.name}</div>
+              <div class="pos-item-sub">${item.product.sku} • ₹${item.product.price.toLocaleString('en-IN')}</div>
+              <div style="font-size:10px; color:var(--text-muted); margin-top:2px;">Size: ${item.size} • ${item.product.category}</div>
+              <label style="display:flex; align-items:center; gap:6px; font-size:10px; margin-top:6px;">
+                Discount %
+                <input class="item-discount-input form-control" type="number" min="0" max="${maxDiscount}" step="0.5"
+                  value="${item.discountPercent || 0}" data-index="${index}" style="width:66px; height:28px; padding:2px 5px;" />
+                <span>Max ${maxDiscount}%</span>
+              </label>
+            </div>
+            <div class="pos-item-actions">
+              <div class="tactile-stepper" style="height:30px;">
+                <button class="stepper-btn cart-dec-btn" data-index="${index}" style="width:28px; height:28px;">${Icons.minus(12)}</button>
+                <span class="stepper-value" style="font-size:12px; min-width:24px;">${item.quantity}</span>
+                <button class="stepper-btn cart-inc-btn" data-index="${index}" style="width:28px; height:28px;">${Icons.plus(12)}</button>
+              </div>
+              <button class="icon-btn-ghost cart-del-btn" data-index="${index}" style="width:30px; height:30px; color:var(--status-outstock);" title="Remove">${Icons.trash(14)}</button>
+            </div>
+          </div>
+        `;
+      }).join('') : `
+        <div style="text-align:center; padding:28px 16px; background:var(--surface-cream); border:1px dashed var(--surface-border); border-radius:12px; color:var(--text-muted);">
+          <div style="margin-bottom:8px; color:var(--color-secondary);">${Icons.shoppingBag(32)}</div>
+          <p style="font-family:var(--font-serif); font-size:15px; color:var(--text-main); margin-bottom:4px;">This bill is empty</p>
+          <p style="font-size:12px; margin-bottom:12px;">Find a product by SKU or browse inventory.</p>
+          <button id="btn-empty-browse-inv" class="btn-secondary" style="font-size:12px;">Browse inventory →</button>
         </div>
       `}
     </div>
 
-    <!-- Quick SKU / Kurti Search Bar -->
-    <div class="search-filter-box" style="margin-bottom:12px;">
-      <div class="search-input-wrap">
-        <span class="search-icon">${Icons.search(16)}</span>
-        <input 
-          id="pos-quick-add-input" 
-          type="text" 
-          class="search-input" 
-          placeholder="Scan or enter Kurti SKU (e.g. TRG-KRT-1011)..." 
-        />
-      </div>
-      <button id="btn-pos-add-manual" class="btn-secondary" style="height:42px;">
-        ${Icons.plus(16)} Add
-      </button>
-    </div>
-
-    <!-- Active Cart Items -->
-    <div class="section-label">
-      <span>Cart Line Items (${State.cart.reduce((s, i) => s + i.quantity, 0)})</span>
-      ${State.cart.length > 0 ? `
-        <button id="btn-clear-cart" style="background:none; border:none; color:var(--color-primary); font-size:11px; cursor:pointer;">
-          Clear All
-        </button>
-      ` : ''}
-    </div>
-
-    <div class="pos-cart-list">
-      ${State.cart.length === 0 ? `
-        <div style="text-align:center; padding:32px 16px; background:var(--surface-cream); border:1px dashed var(--surface-border); border-radius:12px; color:var(--text-muted);">
-          <div style="margin-bottom:8px; color:var(--color-secondary);">${Icons.shoppingBag(32)}</div>
-          <p style="font-family:var(--font-serif); font-size:15px; color:var(--text-main); margin-bottom:4px;">Billing Cart is Empty</p>
-          <p style="font-size:12px; margin-bottom:12px;">Scan garment barcode tag or search SKU to add items.</p>
-          <button id="btn-empty-browse-inv" class="btn-secondary" style="font-size:12px;">
-            Browse Kurti Stock →
-          </button>
-        </div>
-      ` : State.cart.map((item, idx) => `
-        <div class="pos-cart-item">
-          <div class="pos-item-info" style="flex:1; min-width:0; padding-right:8px;">
-            <div class="pos-item-title" style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-              ${item.product.name}
-            </div>
-            <div class="pos-item-sub">
-              ${item.product.sku} • <span style="color:var(--color-primary); font-weight:600;">₹${item.product.price.toLocaleString('en-IN')}</span>
-            </div>
-            <div style="font-size:10px; color:var(--text-muted); margin-top:2px;">
-              Size: ${item.size} • ${item.product.fabric || 'Cotton'}
-            </div>
-          </div>
-
-          <div class="pos-item-actions">
-            <!-- Stepper -->
-            <div class="tactile-stepper" style="height:30px;">
-              <button class="stepper-btn cart-dec-btn" data-index="${idx}" style="width:28px; height:28px;">
-                ${Icons.minus(12)}
-              </button>
-              <span class="stepper-value" style="font-size:12px; min-width:24px;">${item.quantity}</span>
-              <button class="stepper-btn cart-inc-btn" data-index="${idx}" style="width:28px; height:28px;">
-                ${Icons.plus(12)}
-              </button>
-            </div>
-
-            <!-- Remove -->
-            <button class="icon-btn-ghost cart-del-btn" data-index="${idx}" style="width:30px; height:30px; color:var(--status-outstock);" title="Remove">
-              ${Icons.trash(14)}
-            </button>
-          </div>
-        </div>
-      `).join('')}
-    </div>
-
-    ${State.cart.length > 0 ? `
-      <!-- Coupon Strip -->
-      <div class="artisanal-card" style="padding:10px 14px; margin-bottom:12px;">
-        <div style="display:flex; align-items:center; gap:8px;">
-          <span style="color:var(--color-tertiary);">${Icons.tag(16)}</span>
-          <input 
-            type="text" 
-            id="coupon-input" 
-            placeholder="Coupon (TARANGI10, KURTI15)" 
-            value="${State.discountCode}"
-            style="flex:1; height:34px; border:1px solid var(--surface-border); border-radius:6px; padding:0 8px; font-family:var(--font-mono); font-size:12px; text-transform:uppercase;"
-          />
-          ${State.discountCode ? `
-            <button id="btn-remove-discount" class="btn-secondary" style="height:34px; padding:0 10px; font-size:11px; color:var(--status-outstock);">
-              Remove
-            </button>
-          ` : `
-            <button id="btn-apply-discount" class="btn-zari" style="height:34px; padding:0 12px; font-size:11px;">
-              Apply
-            </button>
-          `}
-        </div>
-
-        ${State.discountCode ? `
-          <div style="margin-top:6px; font-size:11px; color:var(--color-tertiary-dark); font-weight:600;">
-            ✓ ${State.discountCode} applied: -${State.discountPercent}% off subtotal
-          </div>
-        ` : ''}
-      </div>
-
-      <!-- Financial Summary & Tax Breakdown -->
+    ${items.length ? `
       <div class="pos-summary-card">
-        <div class="summary-row">
-          <span>Subtotal (${State.cart.reduce((s, i) => s + i.quantity, 0)} pieces)</span>
-          <span style="font-family:var(--font-mono); font-weight:600;">₹${subtotal.toLocaleString('en-IN')}</span>
-        </div>
-
-        ${discountAmount > 0 ? `
-          <div class="summary-row" style="color:var(--color-tertiary-dark); font-weight:600;">
-            <span>Discount (${State.discountPercent}%)</span>
-            <span style="font-family:var(--font-mono);">-₹${discountAmount.toLocaleString('en-IN')}</span>
-          </div>
-        ` : ''}
-
-        <div class="summary-row">
-          <span>Taxable Value</span>
-          <span style="font-family:var(--font-mono);">₹${taxable.toLocaleString('en-IN')}</span>
-        </div>
-
-        <div class="summary-row" style="font-size:11px; color:var(--text-muted);">
-          <span>Garment CGST (2.5%)</span>
-          <span style="font-family:var(--font-mono);">+₹${cgst.toLocaleString('en-IN')}</span>
-        </div>
-
-        <div class="summary-row" style="font-size:11px; color:var(--text-muted);">
-          <span>Garment SGST (2.5%)</span>
-          <span style="font-family:var(--font-mono);">+₹${sgst.toLocaleString('en-IN')}</span>
-        </div>
-
-        <div class="summary-row total-row">
-          <span>Net Bill Payable</span>
-          <span style="font-size:19px; font-family:var(--font-mono);">₹${grandTotal.toLocaleString('en-IN')}</span>
-        </div>
+        <div class="summary-row"><span>Subtotal (${itemCount} pieces)</span><span>₹${totals.subtotalMrp.toLocaleString('en-IN')}</span></div>
+        ${totals.totalDiscountAmount ? `<div class="summary-row" style="color:var(--color-tertiary-dark);"><span>Item discounts</span><span>-₹${totals.totalDiscountAmount.toLocaleString('en-IN')}</span></div>` : ''}
+        <div class="summary-row"><span>Taxable value (GST included in MRP)</span><span>₹${totals.taxableValue.toLocaleString('en-IN')}</span></div>
+        <div class="summary-row" style="font-size:11px; color:var(--text-muted);"><span>CGST included (2.5%)</span><span>₹${totals.cgst.toLocaleString('en-IN')}</span></div>
+        <div class="summary-row" style="font-size:11px; color:var(--text-muted);"><span>SGST included (2.5%)</span><span>₹${totals.sgst.toLocaleString('en-IN')}</span></div>
+        <div class="summary-row total-row"><span>Total payable</span><span style="font-size:19px;">₹${totals.netFinalPayable.toLocaleString('en-IN')}</span></div>
       </div>
 
-      <!-- Payment Mode Selection -->
       <div style="margin-bottom:14px;">
-        <div class="section-label" style="font-size:13px; margin-bottom:6px;">Select Payment Mode</div>
+        <div class="section-label" style="font-size:13px; margin-bottom:6px;">Select payment mode</div>
         <div class="payment-modes-grid">
-          <div class="payment-mode-card ${selectedPaymentMode === 'UPI' ? 'active' : ''}" data-mode="UPI">
-            <span style="font-size:16px;">📲</span>
-            <span>UPI / QR</span>
-          </div>
-
-          <div class="payment-mode-card ${selectedPaymentMode === 'Card' ? 'active' : ''}" data-mode="Card">
-            <span style="font-size:16px;">💳</span>
-            <span>Card POS</span>
-          </div>
-
-          <div class="payment-mode-card ${selectedPaymentMode === 'Cash' ? 'active' : ''}" data-mode="Cash">
-            <span style="font-size:16px;">💵</span>
-            <span>Cash</span>
-          </div>
+          <div class="payment-mode-card ${selectedPaymentMode === 'UPI' ? 'active' : ''}" data-mode="UPI"><span>📲</span><span>UPI / QR</span></div>
+          <div class="payment-mode-card ${selectedPaymentMode === 'Card' ? 'active' : ''}" data-mode="Card"><span>💳</span><span>Card POS</span></div>
+          <div class="payment-mode-card ${selectedPaymentMode === 'Cash' ? 'active' : ''}" data-mode="Cash"><span>💵</span><span>Cash</span></div>
         </div>
       </div>
-
-      <!-- Action: Complete Sale Button -->
-      <button id="btn-complete-sale" class="btn-primary btn-full" style="height:48px; font-size:15px; letter-spacing:0.02em;">
-        ${Icons.check(18)} Complete Bill • ₹${grandTotal.toLocaleString('en-IN')}
+      <button id="btn-complete-sale" class="btn-primary btn-full" style="height:48px; font-size:15px;">
+        ${Icons.check(18)} Complete ${bill.title} • ₹${totals.netFinalPayable.toLocaleString('en-IN')}
       </button>
     ` : ''}
   `;
 
-  // Bind Events
-  container.querySelector('#btn-pos-scanner')?.addEventListener('click', () => {
-    window.dispatchEvent(new CustomEvent('open-barcode-scanner'));
-  });
-
-  container.querySelector('#btn-empty-browse-inv')?.addEventListener('click', () => {
-    State.setActiveTab('inventory');
-  });
-
-  // Customer Autocomplete input
-  const custInput = container.querySelector('#cust-search-input');
-  custInput?.addEventListener('input', (e) => {
-    customerSearchQuery = e.target.value;
-    selectedCustomerObj = null;
-    renderPos(container);
-  });
-
-  // Autocomplete selection
-  container.querySelectorAll('.cust-suggest-item').forEach(item => {
-    item.addEventListener('click', (e) => {
-      const id = e.currentTarget.dataset.id;
-      const found = State.customers.find(c => c.id === id);
-      if (found) {
-        selectedCustomerObj = found;
-        customerSearchQuery = '';
+  const refreshCustomerSuggestions = query => {
+    const suggestions = container.querySelector('#customer-suggestions');
+    const normalizedQuery = query.trim().toLowerCase();
+    const matches = normalizedQuery.length >= 2 ? State.searchCustomers(query).slice(0, 8) : [];
+    if (!suggestions) return;
+    suggestions.innerHTML = matches.length ? `
+      <div class="customer-autocomplete-popover">
+        ${matches.map(customer => `
+          <button type="button" class="cust-suggest-item interactive-tap" data-id="${customer.id}" style="width:100%; border:0; text-align:left; background:transparent;">
+            <span><strong>${customer.name}</strong><br/><small>${customer.mobile}</small></span>
+            <span style="font-size:10px;">${customer.visits || 0} visits</span>
+          </button>
+        `).join('')}
+      </div>
+    ` : '';
+    suggestions.querySelectorAll('.cust-suggest-item').forEach(button => {
+      button.addEventListener('click', () => {
+        const customer = State.customers.find(entry => entry.id === button.dataset.id);
+        if (!customer) return;
+        State.setCustomerForActiveBill(customer.name, customer.mobile);
         renderPos(container);
+      });
+    });
+  };
+
+  const searchInput = container.querySelector('#cust-search-input');
+  searchInput?.addEventListener('input', event => refreshCustomerSuggestions(event.currentTarget.value));
+  refreshCustomerSuggestions(searchInput?.value || '');
+
+  const saveBillCustomer = (shouldNotify = true) => {
+    State.setCustomerForActiveBill(
+      container.querySelector('#cust-new-name')?.value || '',
+      container.querySelector('#cust-new-phone')?.value || '',
+      shouldNotify
+    );
+  };
+  container.querySelector('#cust-new-name')?.addEventListener('change', () => saveBillCustomer(false));
+  container.querySelector('#cust-new-phone')?.addEventListener('change', () => saveBillCustomer(false));
+
+  container.querySelector('#btn-pos-scanner')?.addEventListener('click', () => window.dispatchEvent(new CustomEvent('open-barcode-scanner')));
+  container.querySelector('#btn-empty-browse-inv')?.addEventListener('click', () => State.setActiveTab('inventory'));
+  container.querySelector('#btn-new-bill')?.addEventListener('click', () => State.createNewBillTab());
+  container.querySelectorAll('.bill-tab').forEach(button => {
+    button.addEventListener('click', () => State.switchBillTab(button.dataset.billId));
+  });
+  container.querySelectorAll('.btn-discard-bill').forEach(button => {
+    button.addEventListener('click', () => {
+      const target = State.openBills.find(entry => entry.id === button.dataset.billId);
+      if (!target || !window.confirm(`Discard ${target.title} and all its unsaved items? This cannot be undone.`)) return;
+      State.discardBillTab(target.id);
+    });
+  });
+  container.querySelector('#btn-return-exchange')?.addEventListener('click', openReturnsModal);
+  container.querySelector('#btn-pos-scanner')?.addEventListener('click', () => window.dispatchEvent(new CustomEvent('open-barcode-scanner')));
+
+  const addProductToBill = product => {
+    const stock = State.getProductStock(product.id, currentStore.id);
+    if (stock <= 0) {
+      window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: `${product.sku} is out of stock at ${currentStore.code}.`, type: 'alert' } }));
+      return;
+    }
+    openSizePicker(product, size => {
+      try {
+        State.addToActiveBill(product, size);
+      } catch (error) {
+        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: error.message, type: 'alert' } }));
+      }
+    });
+  };
+
+  const quickInput = container.querySelector('#pos-quick-add-input');
+  const suggestionContainer = container.querySelector('#pos-product-suggestions');
+  const renderSuggestions = () => {
+    const query = quickInput?.value.trim().toLowerCase() || '';
+    const matches = query.length < 2 ? [] : State.products.filter(item =>
+      item.sku.toLowerCase().includes(query) || item.name.toLowerCase().includes(query)
+    ).slice(0, 8);
+    suggestionContainer.innerHTML = matches.map(item => `
+      <button type="button" class="pos-product-suggestion" data-product-id="${item.id}" style="display:flex; width:100%; justify-content:space-between; padding:8px 10px; border:1px solid var(--surface-border); background:var(--surface-card); color:var(--text-main);">
+        <span>${item.name} <small>${item.sku}</small></span><strong>₹${Number(item.price).toLocaleString('en-IN')}</strong>
+      </button>
+    `).join('');
+    suggestionContainer.querySelectorAll('.pos-product-suggestion').forEach(button => {
+      button.addEventListener('click', () => {
+        const product = State.products.find(item => item.id === button.dataset.productId);
+        if (product) addProductToBill(product);
+        quickInput.value = '';
+        suggestionContainer.innerHTML = '';
+      });
+    });
+  };
+  const addFromSearch = () => {
+    const query = quickInput?.value.trim().toLowerCase();
+    if (!query) return;
+    const product = State.products.find(entry => entry.sku.toLowerCase().includes(query) || entry.name.toLowerCase().includes(query));
+    if (!product) {
+      window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: `No product found matching '${query}'.`, type: 'alert' } }));
+      return;
+    }
+    if (quickInput) quickInput.value = '';
+    if (suggestionContainer) suggestionContainer.innerHTML = '';
+    addProductToBill(product);
+  };
+  quickInput?.addEventListener('keydown', event => {
+    if (event.key === 'Enter') addFromSearch();
+  });
+  quickInput?.addEventListener('input', renderSuggestions);
+
+  container.querySelectorAll('.cart-dec-btn, .cart-inc-btn').forEach(button => {
+    button.addEventListener('click', () => State.updateItemQuantity(Number(button.dataset.index), button.classList.contains('cart-inc-btn') ? 1 : -1));
+  });
+  container.querySelectorAll('.cart-del-btn').forEach(button => {
+    button.addEventListener('click', () => State.removeItemFromActiveBill(Number(button.dataset.index)));
+  });
+  container.querySelectorAll('.item-discount-input').forEach(input => {
+    input.addEventListener('change', () => {
+      const actual = State.updateItemDiscount(Number(input.dataset.index), input.value);
+      if (actual !== Number(input.value)) {
+        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: `Discount capped at ${input.max}%.`, type: 'alert' } }));
       }
     });
   });
-
-  container.querySelector('#btn-clear-customer')?.addEventListener('click', () => {
-    selectedCustomerObj = null;
-    customerSearchQuery = '';
-    renderPos(container);
-  });
-
-  // Manual Quick Add SKU
-  const quickInput = container.querySelector('#pos-quick-add-input');
-  container.querySelector('#btn-pos-add-manual')?.addEventListener('click', () => {
-    const val = quickInput.value.trim().toLowerCase();
-    if (!val) return;
-    const prod = State.products.find(p => p.sku.toLowerCase().includes(val) || p.name.toLowerCase().includes(val));
-    if (prod) {
-      State.addToCart(prod);
-      quickInput.value = '';
-      window.dispatchEvent(new CustomEvent('show-toast', {
-        detail: { message: `Added ${prod.name} to cart!`, type: 'success' }
-      }));
-    } else {
-      window.dispatchEvent(new CustomEvent('show-toast', {
-        detail: { message: `No kurti found matching '${val}'`, type: 'alert' }
-      }));
-    }
-  });
-
-  // Cart actions
-  container.querySelectorAll('.cart-dec-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      const idx = parseInt(e.currentTarget.dataset.index, 10);
-      State.updateCartQuantity(idx, -1);
-      renderPos(container);
-    });
-  });
-
-  container.querySelectorAll('.cart-inc-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      const idx = parseInt(e.currentTarget.dataset.index, 10);
-      State.updateCartQuantity(idx, 1);
-      renderPos(container);
-    });
-  });
-
-  container.querySelectorAll('.cart-del-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      const idx = parseInt(e.currentTarget.dataset.index, 10);
-      State.removeFromCart(idx);
-      renderPos(container);
-    });
-  });
-
   container.querySelector('#btn-clear-cart')?.addEventListener('click', () => {
-    State.clearCart();
-    renderPos(container);
+    items.splice(0, items.length);
+    State.notify();
   });
-
-  // Discounts
-  container.querySelector('#btn-apply-discount')?.addEventListener('click', () => {
-    const code = container.querySelector('#coupon-input')?.value || '';
-    const res = State.applyDiscount(code);
-    window.dispatchEvent(new CustomEvent('show-toast', {
-      detail: { message: res.message, type: res.success ? 'success' : 'alert' }
-    }));
-    renderPos(container);
-  });
-
-  container.querySelector('#btn-remove-discount')?.addEventListener('click', () => {
-    State.removeDiscount();
-    renderPos(container);
-  });
-
-  // Payment Mode
   container.querySelectorAll('.payment-mode-card').forEach(card => {
-    card.addEventListener('click', (e) => {
-      selectedPaymentMode = e.currentTarget.dataset.mode;
+    card.addEventListener('click', () => {
+      selectedPaymentMode = card.dataset.mode;
       renderPos(container);
     });
   });
 
-  // Complete Sale
   container.querySelector('#btn-complete-sale')?.addEventListener('click', () => {
-    // Gather customer info
-    let custName = 'Walk-in Client';
-    let custMobile = '9800000000';
-
-    if (selectedCustomerObj) {
-      custName = selectedCustomerObj.name;
-      custMobile = selectedCustomerObj.mobile;
-    } else {
-      const nameInput = container.querySelector('#cust-new-name')?.value.trim();
-      const phoneInput = container.querySelector('#cust-new-phone')?.value.trim();
-      if (nameInput) custName = nameInput;
-      if (phoneInput) custMobile = phoneInput;
+    const name = container.querySelector('#cust-new-name')?.value.trim() || '';
+    const mobile = (container.querySelector('#cust-new-phone')?.value || '').replace(/\D/g, '');
+    if (!name) {
+      window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Enter the customer name before completing this bill.', type: 'alert' } }));
+      container.querySelector('#cust-new-name')?.focus();
+      return;
     }
-
-    const customerPayload = { name: custName, mobile: custMobile };
-
+    if (!/^[6-9]\d{9}$/.test(mobile)) {
+      window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Enter a valid 10-digit mobile number before completing this bill.', type: 'alert' } }));
+      container.querySelector('#cust-new-phone')?.focus();
+      return;
+    }
+    saveBillCustomer();
     const completeCheckout = () => {
-      const completedBill = State.completeBill(customerPayload, selectedPaymentMode);
-      if (completedBill) {
-        selectedCustomerObj = null;
-        customerSearchQuery = '';
-        window.dispatchEvent(new CustomEvent('show-receipt-modal', { detail: { bill: completedBill } }));
+      try {
+        const completedBill = State.completeActiveBill(selectedPaymentMode);
+        if (completedBill) window.dispatchEvent(new CustomEvent('show-receipt-modal', { detail: { bill: completedBill } }));
+      } catch (error) {
+        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: error.message, type: 'alert' } }));
       }
     };
-
     if (selectedPaymentMode === 'UPI') {
-      openUpiSimulationModal(grandTotal, currentStore.name, completeCheckout);
+      openUpiSimulationModal(totals.netFinalPayable, currentStore.name, completeCheckout);
     } else {
       completeCheckout();
     }
   });
+}
+
+export function openSizePicker(product, onSelect) {
+  const sizes = product.availableSizes || product.sizes || [product.size].filter(Boolean);
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay';
+  modal.innerHTML = `
+    <div class="modal-sheet">
+      <div class="modal-drag-handle"></div>
+      <div class="modal-header-row">
+        <h3 class="modal-title">Choose size</h3>
+        <button class="icon-btn-ghost modal-close-btn" style="width:32px; height:32px;">${Icons.x(16)}</button>
+      </div>
+      <p style="font-size:12px; margin-bottom:12px;">${product.name}</p>
+      <div style="display:flex; flex-wrap:wrap; gap:8px;">
+        ${sizes.map(size => `<button class="btn-secondary size-choice" data-size="${size}" style="min-width:70px;">${size}</button>`).join('')}
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  const close = () => modal.remove();
+  modal.querySelector('.modal-close-btn')?.addEventListener('click', close);
+  modal.addEventListener('click', event => { if (event.target === modal) close(); });
+  modal.querySelectorAll('.size-choice').forEach(button => {
+    button.addEventListener('click', () => {
+      onSelect(button.dataset.size);
+      close();
+    });
+  });
+}
+
+function openReturnsModal() {
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay';
+  modal.id = 'modal-return-exchange';
+  modal.innerHTML = `
+    <div class="modal-sheet" style="max-height:90vh;">
+      <div class="modal-drag-handle"></div>
+      <div class="modal-header-row">
+        <h3 class="modal-title">Return / Exchange</h3>
+        <button class="icon-btn-ghost modal-close-btn" style="width:32px; height:32px;">${Icons.x(16)}</button>
+      </div>
+      <p style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">Search by customer name or phone to find the original invoice.</p>
+      <input id="return-customer-search" class="form-control" placeholder="Customer name or mobile" autocomplete="off" />
+      <div id="return-bill-results" style="margin-top:8px;"></div>
+      <div id="return-bill-details" style="margin-top:10px;"></div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  const close = () => modal.remove();
+  modal.querySelector('.modal-close-btn')?.addEventListener('click', close);
+  modal.addEventListener('click', event => { if (event.target === modal) close(); });
+
+  const searchInput = modal.querySelector('#return-customer-search');
+  const results = modal.querySelector('#return-bill-results');
+  const details = modal.querySelector('#return-bill-details');
+  let selectedBill = null;
+  const renderBillResults = query => {
+    const normalized = query.trim().toLowerCase();
+    const normalizedPhone = normalized.replace(/\D/g, '');
+    const matchingBills = normalized.length < 2 ? [] : State.recentBills.filter(bill => bill.billType !== 'return-exchange' && (
+      (bill.customerName || bill.customer || '').toLowerCase().includes(normalized) ||
+      (normalizedPhone.length >= 2 && (bill.customerMobile || '').replace(/\D/g, '').includes(normalizedPhone))
+    ));
+    results.innerHTML = matchingBills.length ? matchingBills.map(bill => `
+      <button class="return-bill-choice btn-secondary" data-bill-id="${bill.id}" style="display:flex; justify-content:space-between; width:100%; height:auto; padding:8px; margin-bottom:5px; text-align:left;">
+        <span>${bill.customerName || bill.customer} • ${bill.customerMobile || 'No phone'}<br/><small>${bill.billNumber || bill.id} • ${bill.date || ''}</small></span>
+        <strong>₹${Number(bill.total || 0).toLocaleString('en-IN')}</strong>
+      </button>
+    `).join('') : normalized.length >= 2 ? '<p style="font-size:12px; color:var(--text-muted);">No matching invoices found.</p>' : '';
+    results.querySelectorAll('.return-bill-choice').forEach(button => {
+      button.addEventListener('click', () => {
+        selectedBill = State.recentBills.find(bill => bill.id === button.dataset.billId);
+        renderSelectedBill();
+      });
+    });
+  };
+  searchInput.addEventListener('input', () => {
+    selectedBill = null;
+    details.innerHTML = '';
+    renderBillResults(searchInput.value);
+  });
+
+  const renderSelectedBill = () => {
+    if (!selectedBill) return;
+    const returnedAlready = State.returns
+      .filter(record => record.originalBillNumber === (selectedBill.billNumber || selectedBill.id))
+      .flatMap(record => record.returnedItems)
+      .reduce((quantities, item) => {
+        const key = `${item.product.id}:${item.size}`;
+        quantities[key] = (quantities[key] || 0) + item.quantity;
+        return quantities;
+      }, {});
+    const originalProductIds = new Set(selectedBill.items.map(item => item.product.id));
+    details.innerHTML = `
+      <div class="section-label">Items on ${selectedBill.billNumber || selectedBill.id}</div>
+      ${selectedBill.items.map((item, index) => {
+        const returnable = Math.max(0, item.quantity - (returnedAlready[`${item.product.id}:${item.size}`] || 0));
+        return `
+          <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 0; border-bottom:1px dashed var(--surface-border); font-size:11px;">
+            <span>${item.product.name} (${item.size})<br/>Purchased: ${item.quantity} • Returnable: ${returnable}</span>
+            <input class="return-quantity" data-index="${index}" type="number" min="0" max="${returnable}" value="0" style="width:64px;" />
+          </label>
+        `;
+      }).join('')}
+      <div class="form-group" style="margin-top:10px;">
+        <label class="form-label">Exchange for (optional)</label>
+        <select id="exchange-product" class="form-control">
+          <option value="">Refund only — no exchange item</option>
+          ${State.products.filter(product =>
+            State.getProductStock(product.id, selectedBill.storeId || State.getCurrentStore().id) > 0 ||
+            originalProductIds.has(product.id)
+          ).map(product => `<option value="${product.id}">${product.name} — ₹${product.price}</option>`).join('')}
+        </select>
+      </div>
+      <div id="exchange-size-wrap" style="display:none; margin-bottom:10px;">
+        <label class="form-label">Exchange size</label>
+        <select id="exchange-size" class="form-control"></select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Exchange item discount % (within product/category limit)</label>
+        <input id="exchange-discount" class="form-control" type="number" min="0" max="0" step="0.5" value="0" disabled />
+      </div>
+      <button id="btn-submit-return" class="btn-primary btn-full">Process return / exchange</button>
+    `;
+    const exchangeSelect = details.querySelector('#exchange-product');
+    exchangeSelect.addEventListener('change', () => {
+      const product = State.products.find(entry => entry.id === exchangeSelect.value);
+      const wrap = details.querySelector('#exchange-size-wrap');
+      const sizeSelect = details.querySelector('#exchange-size');
+      if (!product) {
+        wrap.style.display = 'none';
+        details.querySelector('#exchange-discount').value = '0';
+        details.querySelector('#exchange-discount').max = '0';
+        details.querySelector('#exchange-discount').disabled = true;
+        return;
+      }
+      const categoryLimit = State.masterData.maxDiscountRules[product.category] ?? 15;
+      const discountLimit = Math.min(product.maxDiscountPercent ?? categoryLimit, categoryLimit);
+      const discountInput = details.querySelector('#exchange-discount');
+      discountInput.disabled = false;
+      discountInput.max = String(discountLimit);
+      discountInput.value = '0';
+      const availableSizes = product.availableSizes || product.sizes || [product.size].filter(Boolean);
+      sizeSelect.innerHTML = availableSizes.map(size => `<option value="${size}">${size}</option>`).join('');
+      wrap.style.display = '';
+    });
+    details.querySelector('#btn-submit-return').addEventListener('click', () => {
+      const returnedItems = Array.from(details.querySelectorAll('.return-quantity'))
+        .map(input => ({ ...selectedBill.items[Number(input.dataset.index)], quantity: Number(input.value) || 0 }))
+        .filter(item => item.quantity > 0);
+      if (!returnedItems.length) {
+        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: 'Enter a return quantity for at least one item.', type: 'alert' } }));
+        return;
+      }
+      const exchangedProduct = State.products.find(product => product.id === exchangeSelect.value);
+      const exchangeSize = details.querySelector('#exchange-size')?.value;
+      const discountInput = details.querySelector('#exchange-discount');
+      const exchangeDiscountPercent = Number(discountInput.value) || 0;
+      if (exchangedProduct && (exchangeDiscountPercent < 0 || exchangeDiscountPercent > Number(discountInput.max))) {
+        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: `Exchange discount cannot exceed ${discountInput.max}%.`, type: 'alert' } }));
+        return;
+      }
+      const newItems = exchangedProduct ? [{
+        product: exchangedProduct,
+        size: exchangeSize,
+        quantity: 1,
+        discountPercent: exchangeDiscountPercent
+      }] : [];
+      const returnCreditAmount = returnedItems.reduce((sum, item) => {
+        return sum + Math.round(item.product.price * item.quantity * (1 - (item.discountPercent || 0) / 100));
+      }, 0);
+      const exchangeSubtotal = newItems.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
+      const exchangeAmount = newItems.reduce((sum, item) => sum + Math.round(item.product.price * item.quantity * (1 - item.discountPercent / 100)), 0);
+      let record;
+      try {
+        record = State.processReturnOrExchange({
+          originalBill: selectedBill,
+          returnedItems,
+          newItems,
+          customerName: selectedBill.customerName || selectedBill.customer,
+          customerMobile: selectedBill.customerMobile,
+          returnCreditAmount,
+          exchangeSubtotal,
+          exchangeDiscountAmount: exchangeSubtotal - exchangeAmount,
+          exchangeAmount,
+          netPayableOrRefund: exchangeAmount - returnCreditAmount
+        });
+      } catch (error) {
+        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: error.message, type: 'alert' } }));
+        return;
+      }
+      close();
+      window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: `${record.id} processed. ${exchangeAmount > returnCreditAmount ? 'Collect' : 'Refund'} ₹${Math.abs(exchangeAmount - returnCreditAmount).toLocaleString('en-IN')}.`, type: 'success' } }));
+      window.dispatchEvent(new CustomEvent('show-receipt-modal', { detail: { bill: record.returnBill } }));
+    });
+  };
 }
 
 function openUpiSimulationModal(amount, storeName, onPaid) {
@@ -429,59 +507,20 @@ function openUpiSimulationModal(amount, storeName, onPaid) {
     <div class="modal-sheet" style="text-align:center;">
       <div class="modal-drag-handle"></div>
       <div class="modal-header-row">
-        <h3 class="modal-title" style="margin:0 auto;">UPI Dynamic QR Payment</h3>
+        <h3 class="modal-title" style="margin:0 auto;">UPI Payment</h3>
         <button class="icon-btn-ghost modal-close-btn" style="width:32px; height:32px;">${Icons.x(16)}</button>
       </div>
-
       <div style="margin:16px 0;">
-        <div style="font-family:var(--font-serif); font-size:15px; color:var(--color-primary); font-weight:600;">
-          TARANGI • ${storeName.toUpperCase()}
-        </div>
-        <div style="font-family:var(--font-mono); font-size:24px; font-weight:700; color:var(--text-main); margin:4px 0;">
-          ₹${amount.toLocaleString('en-IN')}
-        </div>
+        <div style="font-family:var(--font-serif); font-size:15px; color:var(--color-primary); font-weight:600;">TARANGI • ${storeName.toUpperCase()}</div>
+        <div style="font-family:var(--font-mono); font-size:24px; font-weight:700; margin:4px 0;">₹${amount.toLocaleString('en-IN')}</div>
         <div style="font-size:11px; color:var(--text-muted);">Scan via GPay, PhonePe, Paytm or BHIM UPI</div>
       </div>
-
-      <div style="width:190px; height:190px; margin:0 auto 16px auto; background:#fff; border:2px solid var(--color-primary); border-radius:12px; padding:12px; display:flex; flex-direction:column; align-items:center; justify-content:center; box-shadow:var(--shadow-md);">
-        <svg width="150" height="150" viewBox="0 0 100 100" fill="#1e1b19">
-          <rect x="5" y="5" width="25" height="25" fill="#881337"/>
-          <rect x="9" y="9" width="17" height="17" fill="#fff"/>
-          <rect x="13" y="13" width="9" height="9" fill="#881337"/>
-          <rect x="70" y="5" width="25" height="25" fill="#881337"/>
-          <rect x="74" y="9" width="17" height="17" fill="#fff"/>
-          <rect x="78" y="13" width="9" height="9" fill="#881337"/>
-          <rect x="5" y="70" width="25" height="25" fill="#881337"/>
-          <rect x="9" y="74" width="17" height="17" fill="#fff"/>
-          <rect x="13" y="78" width="9" height="9" fill="#881337"/>
-          <rect x="36" y="10" width="8" height="8"/>
-          <rect x="50" y="8" width="12" height="10"/>
-          <rect x="38" y="38" width="24" height="24" fill="#b45309"/>
-          <circle cx="50" cy="50" r="6" fill="#fff"/>
-          <rect x="10" y="40" width="10" height="20"/>
-          <rect x="72" y="42" width="18" height="12"/>
-          <rect x="40" y="72" width="12" height="18"/>
-          <rect x="65" y="75" width="25" height="15"/>
-        </svg>
-      </div>
-
-      <div style="font-size:11px; color:var(--status-instock); font-weight:600; display:flex; align-items:center; justify-content:center; gap:6px; margin-bottom:16px;">
-        <span class="pulse-dot"></span> Waiting for soundbox payment notification...
-      </div>
-
-      <button id="btn-simulate-upi-success" class="btn-primary btn-full" style="height:44px;">
-        ${Icons.check(16)} Simulate Customer Scanned & Paid
-      </button>
+      <button id="btn-simulate-upi-success" class="btn-primary btn-full" style="height:44px;">${Icons.check(16)} Simulate payment received</button>
     </div>
   `;
-
   document.body.appendChild(modal);
-
   modal.querySelector('.modal-close-btn')?.addEventListener('click', () => modal.remove());
-  modal.addEventListener('click', (e) => {
-    if (e.target === modal) modal.remove();
-  });
-
+  modal.addEventListener('click', event => { if (event.target === modal) modal.remove(); });
   modal.querySelector('#btn-simulate-upi-success')?.addEventListener('click', () => {
     modal.remove();
     onPaid();

@@ -18,41 +18,23 @@ export function openLoginModal() {
         <button class="icon-btn-ghost modal-close-btn" style="width:32px; height:32px;">${Icons.x(16)}</button>
       </div>
 
-      <p style="font-size:12px; color:var(--text-muted); margin-bottom:14px;">
-        Choose user profile to switch interface between Store Admin and Floor Salesmen.
-      </p>
+      <p style="font-size:12px; color:var(--text-muted); margin-bottom:14px;">Sign in as a staff member or sign out of this register.</p>
 
-      <div style="display:flex; flex-direction:column; gap:10px;">
-        ${State.staffUsers.map(u => {
-          const isCurrent = State.currentUser.id === u.id;
-          const storeName = State.stores.find(s => s.id === u.storeId)?.name || 'All Stores';
-
-          return `
-            <div class="artisanal-card interactive-tap select-user-opt ${isCurrent ? 'accent-rose' : ''}" data-id="${u.id}" style="padding:12px; margin-bottom:0;">
-              <div style="display:flex; align-items:center; justify-content:space-between;">
-                <div style="display:flex; align-items:center; gap:10px;">
-                  <div style="width:38px; height:38px; border-radius:50%; background:${u.role === 'admin' ? 'var(--color-primary)' : 'var(--color-secondary)'}; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:14px;">
-                    ${u.name.charAt(0)}
-                  </div>
-                  <div>
-                    <div style="font-weight:700; font-size:13px; color:var(--text-main);">${u.name}</div>
-                    <div style="font-size:11px; color:var(--text-muted); font-family:var(--font-mono);">
-                      ${u.designation} • ${storeName}
-                    </div>
-                  </div>
-                </div>
-
-                <div style="text-align:right;">
-                  <span class="status-pill ${u.role === 'admin' ? 'lowstock' : 'instock'}" style="font-size:10px;">
-                    ${u.role.toUpperCase()}
-                  </span>
-                  ${isCurrent ? '<div style="font-size:10px; color:var(--color-primary); font-weight:700; margin-top:3px;">Active</div>' : ''}
-                </div>
-              </div>
-            </div>
-          `;
-        }).join('')}
-      </div>
+      <form id="form-switch-user">
+        <div class="form-group">
+          <label class="form-label" for="switch-user-select">Staff member</label>
+          <select id="switch-user-select" class="form-control">
+            ${State.staffUsers.map(user => `<option value="${user.id}">${user.name} • ${user.designation}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="switch-user-pin">PIN</label>
+          <input id="switch-user-pin" class="form-control" type="password" inputmode="numeric" required />
+        </div>
+        <p id="switch-user-error" role="alert" style="display:none; color:var(--status-outstock); font-size:12px; margin-bottom:10px;"></p>
+        <button type="submit" class="btn-primary btn-full">Sign in</button>
+        <button type="button" id="btn-logout" class="btn-secondary btn-full" style="margin-top:8px;">Sign out</button>
+      </form>
     </div>
   `;
 
@@ -64,14 +46,22 @@ export function openLoginModal() {
     if (e.target === modal) closeModal();
   });
 
-  modal.querySelectorAll('.select-user-opt').forEach(opt => {
-    opt.addEventListener('click', (e) => {
-      const id = e.currentTarget.dataset.id;
-      State.setCurrentUser(id);
-      closeModal();
-      window.dispatchEvent(new CustomEvent('show-toast', {
-        detail: { message: `Logged in as ${State.currentUser.name} (${State.currentUser.role.toUpperCase()})`, type: 'success' }
-      }));
-    });
+  modal.querySelector('#form-switch-user')?.addEventListener('submit', event => {
+    event.preventDefault();
+    const id = modal.querySelector('#switch-user-select').value;
+    const pin = modal.querySelector('#switch-user-pin').value;
+    if (!State.login(id, pin)) {
+      const error = modal.querySelector('#switch-user-error');
+      error.textContent = 'The PIN is incorrect. Please try again.';
+      error.style.display = 'block';
+      modal.querySelector('#switch-user-pin').value = '';
+      return;
+    }
+    closeModal();
+  });
+
+  modal.querySelector('#btn-logout')?.addEventListener('click', () => {
+    State.logout();
+    closeModal();
   });
 }
